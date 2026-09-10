@@ -2,7 +2,11 @@
 
 Separat Home Assistant-app för komfortvärme. Målmiljö: Home Assistant OS/Core 2026.9.1, Raspberry Pi 4 (aarch64), 8 GB RAM.
 
-## Version 0.4.0
+## Version 0.5.0
+
+Ny PI-regulator kör i skuggläge med konfigurerbar P/I, anti-windup, kompensations- och ändringsgränser. Resultat visas och loggas. Alla värden är förslag; inga temperaturkommandon skickas. Läs DOCS.md för beräkning och återställningsregler.
+
+## Modellunderlag från 0.4.0
 
 Sparar senaste lyckade CSV-underlag, givarval och modellresultat. Jämför enkla och fördröjda modeller på identiska testfönster. Valbar Ohmigo-entitet läses och loggas utan skrivning.
 

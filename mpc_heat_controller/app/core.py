@@ -4,7 +4,8 @@ import math
 
 DEFAULT = {"mode": "demo", "target": 21.5, "comfort_min": 21.0, "comfort_max": 22.0,
            "indoor": [], "outdoor": "", "supply": "", "return": "", "observe": [],
-           "weather": "", "applied_signal": "", "signal_min": -15.0, "signal_max": 30.0, "max_step": 1.0}
+           "weather": "", "applied_signal": "", "signal_min": -15.0, "signal_max": 30.0, "max_step": 1.0,
+           "pi_kp": 2.0, "pi_ki": 0.1, "pi_limit": 10.0, "pi_rate": 2.0}
 
 def validate(raw):
     if not isinstance(raw, dict) or set(raw) - set(DEFAULT):
@@ -13,9 +14,11 @@ def validate(raw):
     c.update(raw)
     if c["mode"] not in ("demo", "shadow"):
         raise ValueError("Endast demo och skuggläge stöds")
-    for k in ("target", "comfort_min", "comfort_max", "signal_min", "signal_max", "max_step"):
+    for k in ("target", "comfort_min", "comfort_max", "signal_min", "signal_max", "max_step", "pi_kp", "pi_ki", "pi_limit", "pi_rate"):
         if isinstance(c[k], bool) or not isinstance(c[k], (float, int)) or not math.isfinite(c[k]):
             raise ValueError("Ogiltigt numeriskt värde: " + k)
+    if not (0 <= c['pi_kp'] <= 20 and 0 <= c['pi_ki'] <= 5 and 0 < c['pi_limit'] <= 30 and 0 < c['pi_rate'] <= 20):
+        raise ValueError('PI-parametrar ligger utanför tillåtna gränser')
     if not 7 <= c["comfort_min"] <= c["target"] <= c["comfort_max"] <= 35:
         raise ValueError("Börvärdet måste ligga inom komfortintervallet 7–35 °C")
     if not -40 <= c["signal_min"] < c["signal_max"] <= 50 or not 0 < c["max_step"] <= 5:

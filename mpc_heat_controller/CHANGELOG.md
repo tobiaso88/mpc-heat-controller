@@ -1,3 +1,11 @@
+# 0.5.0
+
+- Ny PI-regulator i skuggläge med inställningar för Kp, Ki, kompensationsgräns och ändringshastighet.
+- Visar temperaturfel, P-del, I-del, kompensation, föreslagen utetemperatur och begränsningsstatus.
+- Beräknar var femte minut i bakgrunden och loggar PI-resultat tillsammans med mätloggen.
+- Stoppar förslag och nollställer integratorn vid databortfall, demo och uppehåll över 15 minuter. Relevanta konfigurationsändringar och omstarter återställer regulatorn.
+- Ingen aktiv styrning.
+
 # 0.4.0
 
 - Sparar senaste lyckade modellutvärdering, original-CSV och givarval lokalt och återställer dem när gränssnittet öppnas.

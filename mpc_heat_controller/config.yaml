@@ -1,5 +1,5 @@
 name: MPC Heat Controller
-version: "0.4.0"
+version: "0.5.0"
 slug: mpc_heat_controller
 url: https://github.com/tobiaso88/mpc-heat-controller
 description: Komfortvärme med installationsguide, historikgranskning och simulering

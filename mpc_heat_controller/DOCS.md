@@ -1,6 +1,18 @@
 # MPC Heat Controller
 
-Förhandsversion 0.4.0. Öppna webbgränssnittet via Home Assistant.
+Förhandsversion 0.5.0. Öppna webbgränssnittet via Home Assistant.
+
+## PI i skuggläge
+
+PI kör automatiskt i skuggläge när alla valda reglergivare och utegivaren är giltiga. Inställningarna ligger under Komfort i installationsguiden. Startvärdena Kp=2 och Ki=0,1 är endast exempel för utvärdering, inte injustering av huset.
+
+Temperaturfel = börvärde minus inomhusmedelvärde. P = Kp × fel. I ökar med Ki × fel × förfluten tid i timmar. Föreslagen utetemperatur är verklig utetemperatur minus (P+I), med begränsningar. Positivt P/I betyder värmebehov och negativ utetemperaturkompensation. Maximal kompensation begränsar P+I, medan signal_min/max sätter absoluta utgångsgränser. Om verklig utetemperatur ligger utanför de absoluta gränserna prioriteras dessa; den visade faktiska kompensationen kan då överstiga kompensationsgränsen.
+
+PI har egen ändringshastighet (standard 2 °C/timme); max_step gäller fortfarande enbart MPC-demon. Integreringen pausas när den skulle förstärka en begränsning, även ändringshastighetsbegränsningen. I-delen har dessutom en egen gräns lika med maximal kompensation.
+
+Vid första beräkningen startar förslaget från Ohmigos inställda temperatur om giltig, annars verklig utetemperatur, begränsat till absoluta signalgränser. Nästa beräkning flyttar förslaget med tillåten ändringshastighet. Tillståndet hålls i minnet och I-delen nollställs vid omstart, databortfall, byte till demo, relevanta inställningsändringar eller ett beräkningsuppehåll över 15 minuter. Integrering använder monoton tid och räknar inte ikapp uppehåll.
+
+PI-resultat loggas i pi_samples i mätloggens databas i 90 dagar. Ingen PI-signal skickas till Home Assistant eller Ohmigo. Detta är ännu inte en produktionsregulator och ersätter inte extern PID. Verifiering av watchdog, säker överlämning och aktiv styrning återstår.
 
 Installationsguiden låter dig välja temperaturgivare och komfortmål. I skuggläge läser appen valda givare via Home Assistants interna API. Ingen separat token behövs.
 
