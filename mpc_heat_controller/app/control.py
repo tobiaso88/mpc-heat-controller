@@ -2,20 +2,74 @@
 import math
 import threading
 import time
+import json
+import sqlite3
+from datetime import datetime, timezone
 
 class Control:
-    def __init__(self, request):
+    def __init__(self, request, data=None):
         self.request=request
         self.lock=threading.RLock()
         self.armed=False
         self.settings=None
         self.last_sent=None
         self.changed_at=None
+        self.data=data
+        self.resume_settings=None
+        self.ready_since=None
+        self.recovery_since=time.time()
+        if data is not None and (data/'control.sqlite').exists():
+            with sqlite3.connect(data/'control.sqlite') as db:
+                row=db.execute('SELECT settings FROM intent WHERE id=1').fetchone()
+            if row:self.resume_settings=json.loads(row[0])
         self.info={'active':False,'message':'Avstängd. Aktiv PI måste startas uttryckligen efter varje omstart.'}
+        if self.resume_settings is not None:self.info={'active':False,'message':'Väntar på att givare och utgång ska bli redo för automatisk återstart.'}
+
+    def persist(self, settings):
+        if self.data is not None:
+            self.data.mkdir(parents=True,exist_ok=True)
+            with sqlite3.connect(self.data/'control.sqlite') as db:
+                db.execute('CREATE TABLE IF NOT EXISTS intent (id INTEGER PRIMARY KEY, settings TEXT)')
+                db.execute('DELETE FROM intent')
+                if settings is not None:db.execute('INSERT INTO intent VALUES (1,?)',(json.dumps(settings),))
+        self.resume_settings=settings
+
+    def pause(self,message):
+        with self.lock:
+            if self.armed:self.recovery_since=time.time()
+            self.armed=False;self.ready_since=None
+            self.info={'active':False,'message':message+' Inga kommandon skickas. Väntar på nya giltiga mätvärden.'}
+
+    def resume(self,c,states,items):
+        with self.lock:
+            if self.armed or self.resume_settings is None:return False
+            if not c['auto_restart'] or c!=self.resume_settings:
+                self.stop('Automatisk återstart avbruten: inställningarna har ändrats.');return False
+            try:
+                self.target(c,states)
+                required=set(c['indoor']+[c['outdoor']]+list(filter(None,[c['supply'],c['return']])))
+                by_id={r['entity']:r for r in items}
+                raw={s['entity_id']:s for s in states}
+                for entity in required:
+                    r=by_id[entity]
+                    stamp=datetime.fromisoformat(r['reported_at'].replace('Z','+00:00')).timestamp()
+                    if r['quality']!='OK' or r['value'] is None or not math.isfinite(r['value']) or stamp<self.recovery_since or raw[entity].get('attributes',{}).get('restored'):
+                        raise ValueError()
+                if self.ready_since is None:self.ready_since=time.monotonic()
+                if time.monotonic()-self.ready_since<60:
+                    self.info={'active':False,'message':'Givare och utgång tillgängliga. Väntar på ny kontroll efter minst 60 sekunder; inget skickas.'};return False
+                self.arm(c,states,items)
+                return True
+            except (ValueError,KeyError,TypeError,AttributeError):
+                self.ready_since=None
+                self.info={'active':False,'message':'Väntar på nya giltiga givarrapporter, tillgänglig Ohmigo och avstängd gammal automation. Inget skickas.'}
+                return False
 
     def stop(self, message='Stoppad. Inga fler kommandon skickas; verifierad watchdog måste återgå till riktig utegivare.'):
         with self.lock:
             self.armed=False
+            self.persist(None)
+            self.ready_since=None
             self.info={'active':False,'message':message}
 
     def target(self,c,states):
@@ -30,6 +84,7 @@ class Control:
         if not entity.startswith('number.'):raise ValueError('Aktiv PI kräver en number-entitet som utgång.')
         s=by_id.get(entity,{})
         a=s.get('attributes',{})
+        if a.get('restored'):raise ValueError('Utgången är ett återställt värde och ännu inte tillgänglig.')
         try:
             value=float(s['state']);low=float(a['min']);high=float(a['max']);step=float(a['step'])
             if not all(math.isfinite(x) for x in (value,low,high,step)) or step<=0 or low>=high:raise ValueError()
@@ -45,6 +100,7 @@ class Control:
             valid={r['entity'] for r in items if r['quality']=='OK' and r['value'] is not None and math.isfinite(r['value'])}
             if not c['indoor'] or not required.issubset(valid):raise ValueError('Aktuella inne- och utetemperaturer krävs.')
             if self.armed:raise ValueError('PI är redan aktiv.')
+            self.persist(dict(c) if c.get('auto_restart') else None)
             self.settings=dict(c);self.armed=True;self.last_sent=value;self.changed_at=time.monotonic()
             self.info={'active':True,'message':'Aktiverad. Väntar på första temperaturkommandot.'}
 
@@ -72,7 +128,9 @@ class Control:
                 self.info={'active':True,'value':value,'sent_at':time.time(),
                            'message':'Temperaturkommando skickat via HA. Detta är inte kvittens från värmepumpen.'}
             except Exception as e:
-                self.stop('PI stoppad: '+(str(e) if isinstance(e,ValueError) else 'Skrivning till Home Assistant misslyckades.')+' Inga fler kommandon skickas; watchdog ska återgå till riktig utegivare.')
+                message='PI stoppad: '+(str(e) if isinstance(e,ValueError) else 'Skrivning till Home Assistant misslyckades.')
+                if isinstance(e,ValueError):self.stop(message)
+                else:self.pause(message)
 
     def get(self):
-        with self.lock:return dict(self.info)
+        with self.lock:return dict(self.info, auto_restart_pending=self.resume_settings is not None and not self.armed)

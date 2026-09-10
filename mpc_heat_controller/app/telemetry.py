@@ -44,6 +44,7 @@ def readings(c, states):
             else:
                 age = (now() - datetime.fromisoformat(stamp.replace('Z', '+00:00'))).total_seconds()
                 quality = 'OK' if -60 <= age <= 7200 else 'Gammalt värde'
+                if attrs.get('restored'):quality='Återställt värde, väntar på rapport'
         except (ValueError, TypeError, KeyError, AttributeError):
             value = None
         result.append({'entity': entity, 'name': attrs.get('friendly_name', entity),
@@ -81,7 +82,7 @@ class Collector:
         self.forecast = {'points': [], 'message': 'Ingen väderentitet vald.'}
         self.wake = threading.Event()
         self.pi = PI()
-        self.control = Control(request)
+        self.control = Control(request, data)
         self.cycle_lock = threading.RLock()
 
     def cycle(self):
@@ -93,6 +94,7 @@ class Collector:
         try:
             states = request('states')
             items = readings(c, states)
+            if self.control.resume(c,states,items):self.pi.reset()
             if self.control.get()['active']:
                 # A number state can remain unchanged for days; freshly read state is the initial setpoint, not a temperature sensor.
                 self.control.target(c,states)
@@ -115,13 +117,18 @@ class Collector:
             stamp = now().isoformat()
             snapshot = {'readings': items, 'forecast': self.forecast, 'sampled_at': stamp, 'error': None, 'logging': c['mode'] == 'shadow'}
             snapshot['pi'] = self.pi.step(c, items)
+            required=set(c['indoor']+[c['outdoor']]+list(filter(None,[c['supply'],c['return']])))
+            valid={r['entity'] for r in items if r['quality']=='OK' and r['value'] is not None}
+            if self.control.get()['active'] and (not required.issubset(valid) or snapshot['pi']['signal'] is None):
+                self.control.pause('PI pausad: ogiltiga givare.')
+                self.pi.reset()
             if c['mode'] == 'shadow':
                 self.store(stamp, items, c, snapshot['pi'])
             self.control.send(c,states,snapshot['pi'])
             if self.control.get()['active']:
                 snapshot['pi']['message']='Aktiv PI. Temperaturkommandon skickas till vald utgång; se styrstatus.'
         except Exception:
-            if self.control.get()['active']:self.control.stop('PI stoppad vid databortfall eller loggningsfel. Inga fler kommandon skickas; watchdog ska återgå till riktig utegivare.')
+            self.control.pause('PI pausad vid databortfall eller loggningsfel. Watchdog ska återgå till riktig utegivare.')
             self.pi.reset()
             snapshot = {'readings': [], 'forecast': {'points': [], 'message': 'Väderprognosen är inte tillgänglig.'},
                         'sampled_at': None, 'error': 'Kunde inte läsa eller logga data. Kontrollera HA-anslutningen och ledigt lagringsutrymme.', 'logging': False}
@@ -146,7 +153,8 @@ class Collector:
         while True:
             self.wake.clear()
             self.cycle()
-            self.wake.wait(60 if self.control.get()['active'] else 300)
+            state=self.control.get()
+            self.wake.wait(60 if state['active'] or state['auto_restart_pending'] else 300)
 
     def start(self):
         threading.Thread(target=self.run, daemon=True).start()

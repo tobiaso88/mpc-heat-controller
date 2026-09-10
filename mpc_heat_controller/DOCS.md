@@ -1,8 +1,8 @@
-# MPC Heat Controller 0.6.0
+# MPC Heat Controller 0.7.0
 
 ## Grundläge och aktiv PI
 
-Appen börjar med skrivning avstängd efter varje omstart, även efter uppdatering. Demo visar syntetiska data. Skuggläge beräknar PI med verkliga givare och loggar utan skrivning. Aktiv PI är en separat, tillfällig aktivering från översikten.
+Appen börjar alltid utan skrivning. Om automatisk återstart är vald och PI tidigare aktiverats inväntar appen färska giltiga givarrapporter och återupptar sedan styrningen. Demo visar syntetiska data. Skuggläge beräknar PI med verkliga givare och loggar utan skrivning. Aktiv PI startas från översikten. Återstartsönskemålet sparas beständigt bara om automatisk återstart är vald.
 
 ## Förbered överlämning
 
@@ -18,7 +18,7 @@ Aktiv PI skriver via number.set_value ungefär varje minut plus nätverks- och b
 
 Stoppa PI upphör med nya kommandon. Ett redan pågående HTTP-anrop kan behöva avslutas först (timeout 15 sekunder). Ingen direkt bypass eller återgångssignal skickas: Ohmigos verifierade watchdog måste ge fallback när kommandona upphör. Stoppa appen i HA om webbgränssnittets stopp inte kan bekräftas. Återaktivera inte gamla automationen förrän nya appens skrivning stoppats.
 
-Vid ogiltiga eller äldre än två timmar rapporterade reglergivare, HA-fel, loggningsfel, återaktiverad gammal automation, ändrade inställningar eller oväntat utgångsvärde stoppas fortsatt skrivning och ny aktivering krävs. Automatisk återaktivering efter omstart stöds inte. Väderfel påverkar inte PI, som använder verklig utegivare. Utgångens inställda värde kan vara oförändrat länge; dess färska avläsning från HA används vid överlämning men visar inte om pumpen är i fallback.
+Vid ogiltiga eller äldre än två timmar rapporterade reglergivare, HA-fel, loggningsfel, återaktiverad gammal automation, ändrade inställningar eller oväntat utgångsvärde stoppas fortsatt skrivning och ny aktivering krävs. Automatisk återstart kan väljas enligt avsnittet nedan. Väderfel påverkar inte PI, som använder verklig utegivare. Utgångens inställda värde kan vara oförändrat länge; dess färska avläsning från HA används vid överlämning men visar inte om pumpen är i fallback.
 
 ## PI-beräkning
 
@@ -35,3 +35,13 @@ Väderprognos hämtas var 30:e minut från vald HA-entitet med hourly via weathe
 Historikvyn kan granska CSV och jämföra enkel modell med fördröjningsmodell. Senaste lyckade CSV, givarval och resultat sparas i /data/model.sqlite. Alla modeller och horisonter använder gemensamma 24-timmarsfönster med sex timmars förhistorik. Träning använder första 70 procenten av kompletta timmar; senare data används för validering. Timmedel är aritmetiska, luckor fylls inte. Fördröjningsmodellen har fast ridge=0,01.
 
 Historiska framtida väder- och styrvärden används i offlineutvärderingen, inte historiska väderprognoser eller alternativa MPC-kommandon. Ingen MPC-modell aktiveras automatiskt. Egna HA-entiteter återstår.
+
+## Automatisk återstart i 0.7.0
+
+Kryssa i automatisk återstart i Förbered aktiv PI, spara och aktivera PI en gång. Att kryssa i eller spara startar aldrig styrningen på egen hand. Inställningen är av som standard vid uppgradering.
+
+Efter omstart eller tillfälligt avbrott krävs nya rapporter från alla reglergivare, utegivaren och vald framledning/retur, rapporterade efter omstarten eller avbrottet. Givarna måste vara giltiga i två kontroller med minst 60 sekunders mellanrum. Under hela väntan skickas inga kommandon. Ohmigo måste ha ett tillgängligt numeriskt tillstånd med rätt metadata, den gamla automationen måste vara avstängd och watchdogvillkoren uppfyllda. Uppföljningsrum och väderprognos behövs inte för PI och blockerar inte start. HA:s entitetstillstånd är inte ett oberoende bevis på pumpens eller MQTT-brokerns fysiska tillgänglighet. Watchdog behövs fortfarande.
+
+Tillfälliga givar-, kommunikations- och loggningsfel pausar och kan återupptas. Oväntad utgångsändring och konfigurationskonflikt vid skrivning kräver manuell aktivering. Manuellt stopp och sparade inställningar raderar återstartsönskemålet, även över omstart. Stoppa därför appen via PI-stoppknappen om du vill att den ska förbli avstängd efter en senare appstart.
+
+Regulatorn återställs och startar mjukt från tillgängligt Ohmigo-värde vid återstart. Inga gamla beräknade kommandon spelas upp.

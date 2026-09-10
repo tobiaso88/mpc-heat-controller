@@ -2,11 +2,11 @@
 
 Home Assistant-app för komfortvärme med eget webbgränssnitt, PI och experimentell modellutvärdering. Mål: HA OS 2026.9.1, Raspberry Pi 4 aarch64, 8 GB.
 
-## Version 0.6.0
+## Version 0.7.0
 
 - Installationsguide med valbara givare, komfortmål, väderkälla och PI-parametrar.
 - PI i skuggläge eller uttryckligen aktiverad skrivning till Ohmigos number-entitet.
-- Aktiv styrning är alltid av efter installation, omstart, fel och sparade inställningar.
+- Valbar automatisk återstart inväntar nya giltiga givarrapporter och två godkända kontroller. Manuellt stopp och sparade inställningar blockerar återstart tills du aktiverar igen.
 - Aktiv PI kräver verifierad kommandowatchdog och avstängd gammal automation. Läs [instruktionerna](mpc_heat_controller/DOCS.md) före överlämning.
 - Timprognos, mätloggning och sparad offlinejämförelse av husmodeller. Ingen aktiv MPC ännu.
 

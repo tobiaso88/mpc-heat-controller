@@ -1,3 +1,11 @@
+# 0.7.0
+
+- Valbar automatisk återstart av tidigare aktiverad PI efter appomstart eller tillfälligt kommunikations-/givaravbrott.
+- Skickar inget under väntan. Kräver nya giltiga rapporter för reglergivare, utegivare och vald framledning/retur efter avbrottet samt två godkända kontroller med minst 60 sekunders mellanrum.
+- Återställda HA-värden godtas inte innan riktig rapport finns. Ohmigo, gamla automationen och watchdogvillkoren kontrolleras fortfarande.
+- Manuellt stopp och sparade inställningar raderar återstartsönskemålet beständigt. Ny aktivering krävs då.
+- Uppgraderade installationer får automatisk återstart avstängd som standard.
+
 # 0.6.0
 
 - Aktiv PI kan startas uttryckligen från översikten och skriver till vald number-entitet via HA.
