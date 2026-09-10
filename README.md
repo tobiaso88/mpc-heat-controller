@@ -2,9 +2,13 @@
 
 Separat Home Assistant-app för komfortvärme. Målmiljö: Home Assistant OS/Core 2026.9.1, Raspberry Pi 4 (aarch64), 8 GB RAM.
 
-## Version 0.3.0
+## Version 0.4.0
 
-Historikvyn kan nu anpassa en enkel modell med valbara historiska entiteter och separat senare valideringsperiod. Fel på 1–24 timmar jämförs med oförändrad temperatur. Modellen aktiveras inte automatiskt och resultaten sparas inte.
+Sparar senaste lyckade CSV-underlag, givarval och modellresultat. Jämför enkla och fördröjda modeller på identiska testfönster. Valbar Ohmigo-entitet läses och loggas utan skrivning.
+
+## Modellutvärdering
+
+Historikvyn kan nu anpassa en enkel modell med valbara historiska entiteter och separat senare valideringsperiod. Fel på 1–24 timmar jämförs med oförändrad temperatur. Modellen aktiveras inte automatiskt och resultaten sparas lokalt efter lyckad utvärdering.
 
 ## Datainsamling från 0.2.0
 

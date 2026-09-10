@@ -3,6 +3,7 @@ import io
 import json
 import math
 import os
+import sqlite3
 import tempfile
 import threading
 import urllib.request
@@ -13,6 +14,7 @@ from pathlib import Path
 from .core import DEFAULT, validate, simulate
 from .telemetry import Collector, readings
 from .model import evaluate
+from . import model_store
 
 DATA = Path(os.environ.get("MPC_DATA", "./data"))
 STATIC = Path(__file__).parent / "static"
@@ -45,7 +47,7 @@ def ha_states():
     req = urllib.request.Request("http://supervisor/core/api/states", headers={"Authorization": "Bearer " + token})
     with urllib.request.urlopen(req, timeout=10) as response:
         states = json.load(response)
-    return {"connected": True, "entities": [s for s in states if s["entity_id"].startswith(("sensor.", "weather."))]}
+    return {"connected": True, "entities": [s for s in states if s["entity_id"].startswith(("sensor.", "weather.", "number."))]}
 
 def status(c, source):
     if c["mode"] == "demo":
@@ -100,6 +102,7 @@ class Handler(BaseHTTPRequestHandler):
             path = self.path.split("?")[0]
             if path == "/api/config": return self.reply(200, config())
             if path == "/api/entities": return self.reply(200, ha_states())
+            if path == "/api/model/saved": return self.reply(200, model_store.load(DATA))
             if path == "/api/telemetry": return self.reply(200, COLLECTOR.get() if COLLECTOR else {})
             if path == "/api/status":
                 c = config()
@@ -126,10 +129,14 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/history": return self.reply(200, inspect_csv(body))
             if self.path == "/api/model/evaluate":
                 payload = json.loads(body)
-                return self.reply(200, evaluate(payload['csv'], payload['mapping']))
+                result = evaluate(payload['csv'], payload['mapping'])
+                model_store.save(DATA, payload['csv'], result)
+                return self.reply(200, result)
             self.reply(404, {"error": "Åtgärden finns inte"})
         except (ValueError, TypeError, KeyError, UnicodeError) as e:
             self.reply(400, {"error": str(e)})
+        except (OSError, sqlite3.Error):
+            self.reply(503, {"error": "Kunde inte spara resultatet. Kontrollera ledigt lagringsutrymme. Tidigare sparat underlag behålls."})
 
 if __name__ == "__main__":
     COLLECTOR = Collector(config, DATA)

@@ -1,3 +1,11 @@
+# 0.4.0
+
+- Sparar senaste lyckade modellutvärdering, original-CSV och givarval lokalt och återställer dem när gränssnittet öppnas.
+- Jämför enkel modell, modell med temperatur- och styrsignalfördröjningar samt oförändrad temperatur på samma testfönster vid alla horisonter.
+- Sex timmars förhistorik krävs; luckor fylls inte. Fördröjningsmodellens regularisering är fast och väljs inte på testdata.
+- Valbar sensor/number-entitet för avläsning och loggning av Ohmigos inställda temperatur. Inga kommandon skickas.
+- Modellresultat är fortsatt endast offlinekandidater.
+
 # 0.3.0
 
 - Historikimport med val av rumsgivare, verklig utetemperatur, historisk styrsignal och datumintervall.

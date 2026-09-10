@@ -1,6 +1,6 @@
 # MPC Heat Controller
 
-Förhandsversion 0.3.0. Öppna webbgränssnittet via Home Assistant.
+Förhandsversion 0.4.0. Öppna webbgränssnittet via Home Assistant.
 
 Installationsguiden låter dig välja temperaturgivare och komfortmål. I skuggläge läser appen valda givare via Home Assistants interna API. Ingen separat token behövs.
 
@@ -20,4 +20,12 @@ Granska CSV under Historik, välj därefter rumsgivare, verklig utetemperatur oc
 
 Modellen beskriver nästa timmes temperaturförändring som en linjär funktion av inne-, ute- och beräknad utetemperatur. Timmedel räknas från tillgängliga rader. Det är inte tidsvägda medel av tillståndsändringar; välj helst en enhetlig period med timstatistik. Inga luckor fylls. Träningsperioden utgör de första 70 procenten av kompletta timmar och valideringen de sista 30 procenten. Prognoserna rullas fram rekursivt utan framtida rumstemperaturer som indata.
 
-Valideringen använder däremot kända framtida historiska utetemperaturer och styrsignaler. Den prövar inte prognosfel i vädertjänsten eller alternativ MPC-styrning. Testfönstren överlappar och är inte oberoende försök. Styrsignalens historiska begränsningar och pumpens interna reglering är ännu inte identifierade. Därför aktiveras ingen modell automatiskt. Resultat och modell finns endast i aktuell granskning och sparas inte vid omladdning.
+Valideringen använder däremot kända framtida historiska utetemperaturer och styrsignaler. Den prövar inte prognosfel i vädertjänsten eller alternativ MPC-styrning. Testfönstren överlappar och är inte oberoende försök. Styrsignalens historiska begränsningar och pumpens interna reglering är ännu inte identifierade. Därför aktiveras ingen modell automatiskt. Senaste lyckade resultat, givarval och CSV sparas i /data/model.sqlite och återställs vid omladdning och omstart. En ny lyckad utvärdering ersätter den tidigare. Misslyckad utvärdering behåller tidigare sparat underlag.
+
+## Modelljämförelse i 0.4.0
+
+Den enkla modellen jämförs med en kandidat som även använder temperaturförändringar under de senaste två timmarna och styrsignalens senaste sex timmar. Alla modeller tränas på samma rader. Alla fyra horisonter utvärderas från samma starttider med kompletta 24-timmarsfönster och sex timmars förhistorik. Därför kan antalet testfönster och felvärden skilja sig från 0.3.0. Kandidaten använder standardiserade variabler och en fast ridge-regularisering på 0,01, utan anpassning mot valideringsdata. Ingen kandidat aktiveras automatiskt.
+
+## Ohmigos inställda värde
+
+Välj sensor eller number-entitet i installationsguiden. Appen läser och loggar den på samma sätt som temperaturgivarna. Ett inställt värde är inte en kvittens på vad pumpen läst och visar inte säkert watchdogens fallback. Värdet påverkar inte regleringens rumstemperaturmedelvärde.

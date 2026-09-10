@@ -18,7 +18,9 @@ class ModelTests(unittest.TestCase):
     def test_known_model_holdout(self):
         result=evaluate(self.dataset(),{'indoor':['sensor.room'],'outdoor':'sensor.out','signal':'sensor.signal','start':'2025-01-01','end':'2025-01-26'})
         self.assertEqual(result['complete_hours'],600)
-        self.assertEqual(result['training_pairs'],419)
+        self.assertEqual(result['training_pairs'],413)
+        self.assertEqual(len(set(m['windows'] for m in result['metrics'])),1)
+        self.assertTrue(all(math.isfinite(m['lag_mae']) for m in result['metrics']))
         for m in result['metrics']:
             self.assertGreater(m['windows'],0)
             self.assertLess(m['mae'],0.00001)

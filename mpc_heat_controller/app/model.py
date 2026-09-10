@@ -55,36 +55,9 @@ def evaluate(content, mapping):
             points[stamp]=(sum(mean(e) for e in indoor)/len(indoor),mean(outside),mean(signal))
     times=sorted(points)
     if len(times)<240: raise ValueError('Minst 240 kompletta timvärden behövs. Välj en längre gemensam period.')
-    cutoff=times[int(len(times)*0.7)]
-    pairs=[t for t in times if t+timedelta(hours=1) in points]
-    train=[t for t in pairs if t+timedelta(hours=1)<cutoff]
-    if len(train)<168: raise ValueError('För få sammanhängande träningstimmar.')
-    # dT = intercept + a*(Tout-Tin) + b*(Tin) + c*(fake Tout)
-    features=lambda temp,out,u:[1.0,out-temp,temp,u]
-    xs=[features(*points[t]) for t in train]
-    ys=[points[t+timedelta(hours=1)][0]-points[t][0] for t in train]
-    a=[[sum(x[i]*x[j] for x in xs) for j in range(4)] for i in range(4)]
-    b=[sum(x[i]*y for x,y in zip(xs,ys)) for i in range(4)]
-    coefficients=solve(a,b)
-    predict=lambda temp,out,u:temp+sum(c*x for c,x in zip(coefficients,features(temp,out,u)))
-    metrics=[]; example=[]
-    for horizon in (1,6,12,24):
-        errors=[]; baseline=[]
-        for t in times:
-            if t<cutoff or any(t+timedelta(hours=h) not in points for h in range(horizon+1)): continue
-            temp=points[t][0]; path=[]
-            for h in range(horizon):
-                current=t+timedelta(hours=h)
-                temp=predict(temp,points[current][1],points[current][2])
-                truth=points[current+timedelta(hours=1)][0]
-                path.append({'time':(current+timedelta(hours=1)).isoformat(),'predicted':round(temp,3),'actual':round(truth,3)})
-            if not math.isfinite(temp) or abs(temp)>1000: raise ValueError('Modellen är instabil i valideringen.')
-            errors.append(abs(temp-truth));baseline.append(abs(points[t][0]-truth))
-            if horizon==24 and not example:example=path
-        metrics.append({'hours':horizon,'windows':len(errors),'mae':sum(errors)/len(errors) if errors else None,
-                        'baseline_mae':sum(baseline)/len(baseline) if baseline else None})
-    return {'status':'offline_candidate','coefficients':coefficients,'complete_hours':len(times), 'training_pairs':len(train),
-            'split_at':cutoff.isoformat(),'invalid_rows':invalid,'incomplete_hours':len(buckets)-len(points),
-            'metrics':metrics,'example':example,'mapping':mapping,
-            'message':'Offline kandidat, inte aktiverad. Validering använder känd historisk utetemperatur och beräknad styrsignal. Det mäter inte effekten av alternativ MPC-styrning.',
-            'aggregation':'Aritmetiska timmedel av tillgängliga rader. Luckor fylls inte. Blandad råhistorik och timstatistik kan ge olika viktning.'}
+    from .comparison import compare
+    result = compare(points, solve)
+    return dict(result, status="offline_candidate", complete_hours=len(times), invalid_rows=invalid,
+                incomplete_hours=len(buckets)-len(points), mapping=mapping,
+                message="Offlinejämförelse, inte aktiverad. Använder känd historisk utetemperatur och styrsignal, inte alternativa MPC-kommandon.",
+                aggregation="Aritmetiska timmedel. Luckor fylls inte. Blandad råhistorik och timstatistik kan ge olika viktning.")

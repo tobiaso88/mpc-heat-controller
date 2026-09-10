@@ -4,7 +4,7 @@ import math
 
 DEFAULT = {"mode": "demo", "target": 21.5, "comfort_min": 21.0, "comfort_max": 22.0,
            "indoor": [], "outdoor": "", "supply": "", "return": "", "observe": [],
-           "weather": "", "signal_min": -15.0, "signal_max": 30.0, "max_step": 1.0}
+           "weather": "", "applied_signal": "", "signal_min": -15.0, "signal_max": 30.0, "max_step": 1.0}
 
 def validate(raw):
     if not isinstance(raw, dict) or set(raw) - set(DEFAULT):
@@ -27,9 +27,11 @@ def validate(raw):
             raise ValueError("Välj sensorer för rumstemperatur")
         if len(set(c[k])) != len(c[k]):
             raise ValueError("Samma givare får bara väljas en gång")
-    for k in ("outdoor", "supply", "return", "weather"):
+    for k in ("outdoor", "supply", "return", "weather", "applied_signal"):
         if not isinstance(c[k], str) or len(c[k]) > 255:
             raise ValueError("Ogiltig entitet")
+    if c['applied_signal'] and not c['applied_signal'].startswith(('sensor.', 'number.')):
+        raise ValueError('Välj en sensor eller number-entitet för Ohmigos inställda temperatur')
     if c["mode"] == "shadow" and (not c["indoor"] or not c["outdoor"]):
         raise ValueError("Välj inne- och utegivare först")
     return c
