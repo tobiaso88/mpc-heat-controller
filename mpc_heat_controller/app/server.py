@@ -11,10 +11,12 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from .core import DEFAULT, validate, simulate
+from .telemetry import Collector, readings
 
 DATA = Path(os.environ.get("MPC_DATA", "./data"))
 STATIC = Path(__file__).parent / "static"
 LOCK = threading.RLock()
+COLLECTOR = None
 
 def config():
     with LOCK:
@@ -47,24 +49,11 @@ def ha_states():
 def status(c, source):
     if c["mode"] == "demo":
         return {"mode": "demo", "message": "Simulerat hus och simulerat väder. Modellen är inte kalibrerad.", "temperature": 21.1, "plan": simulate(c)}
-    states = {s["entity_id"]: s for s in source["entities"]}
-    values, errors = [], []
-    for entity in c["indoor"] + [c["outdoor"]]:
-        try:
-            s = states[entity]
-            value = float(s["state"])
-            if not math.isfinite(value) or s["attributes"].get("unit_of_measurement") != "°C":
-                raise ValueError()
-            stamp = datetime.fromisoformat(s.get("last_updated", "").replace("Z", "+00:00"))
-            age = (datetime.now(timezone.utc) - stamp).total_seconds()
-            if not 0 <= age <= 7200:
-                raise ValueError()
-            if entity in c["indoor"]:
-                values.append(value)
-        except (KeyError, ValueError, TypeError):
-            errors.append(entity)
-    return {"mode": "shadow", "temperature": round(sum(values) / len(values), 2) if values and not errors else None,
-            "plan": [], "message": "Saknade eller gamla mätvärden: " + ", ".join(errors) if errors else "Mätning fungerar. Styrförslag väntar på validerad husmodell och väderprognos."}
+    items = readings(c, source['entities'])
+    indoor = [r for r in items if 'Reglering' in r['roles']]
+    errors = [r['entity'] for r in items if r['quality'] != 'OK' and ('Reglering' in r['roles'] or 'Utomhus' in r['roles'])]
+    return {'mode': 'shadow', 'temperature': round(sum(r['value'] for r in indoor)/len(indoor),2) if indoor and not errors else None,
+            'plan': [], 'message': 'Saknade eller gamla mätvärden: '+', '.join(errors) if errors else 'Mätning fungerar. Inomhusprognos och styrförslag väntar på validerad husmodell. Väder visas separat nedan.'}
 
 def inspect_csv(content):
     reader = csv.DictReader(io.StringIO(content.decode("utf-8-sig")))
@@ -110,6 +99,7 @@ class Handler(BaseHTTPRequestHandler):
             path = self.path.split("?")[0]
             if path == "/api/config": return self.reply(200, config())
             if path == "/api/entities": return self.reply(200, ha_states())
+            if path == "/api/telemetry": return self.reply(200, COLLECTOR.get() if COLLECTOR else {})
             if path == "/api/status":
                 c = config()
                 return self.reply(200, status(c, ha_states() if c["mode"] == "shadow" else {"entities": []}))
@@ -129,11 +119,15 @@ class Handler(BaseHTTPRequestHandler):
             if not 0 < size <= 20_000_000: return self.reply(413, {"error": "Filgräns 20 MB"})
             body = self.rfile.read(size)
             if self.path == "/api/config":
-                c = validate(json.loads(body)); save(c); return self.reply(200, c)
+                c = validate(json.loads(body)); save(c)
+                if COLLECTOR: COLLECTOR.wake.set()
+                return self.reply(200, c)
             if self.path == "/api/history": return self.reply(200, inspect_csv(body))
             self.reply(404, {"error": "Åtgärden finns inte"})
         except (ValueError, TypeError, KeyError, UnicodeError) as e:
             self.reply(400, {"error": str(e)})
 
 if __name__ == "__main__":
+    COLLECTOR = Collector(config, DATA)
+    COLLECTOR.start()
     ThreadingHTTPServer((os.environ.get("MPC_HOST", "127.0.0.1"), int(os.environ.get("MPC_PORT", "8099"))), Handler).serve_forever()

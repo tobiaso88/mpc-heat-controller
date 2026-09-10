@@ -2,12 +2,16 @@
 
 Separat Home Assistant-app för komfortvärme. Målmiljö: Home Assistant OS/Core 2026.9.1, Raspberry Pi 4 (aarch64), 8 GB RAM.
 
+## Version 0.2.0
+
+Timprognos hämtas från vald HA-väderentitet. Alla valda temperaturgivare visas med datastatus. I skuggläge loggas mätvärden och konfiguration var femte minut till lokal SQLite med 90 dagars retention, även när webbläsaren är stängd.
+
 ## Första körbara grund
 
 - Svenskt webbgränssnitt med installationsguide, valbara givare och beständiga inställningar.
 - Home Assistant-entiteter läses via Supervisor-proxyn när appen körs i HA. Inga installationsspecifika entitets-ID:n är hårdkodade.
 - Demo med en enkel termisk exempelmodell och begränsad beam-search-planering över 24 timmar. Modellparametrarna är **inte identifierade från huset**. Exempelvädret är syntetiskt.
-- Skuggläge läser valda givare och visar medeltemperatur. Det skapar ännu inga verkliga styrförslag: modellidentifiering och prognoshämtning återstår.
+- Skuggläge läser valda givare och visar medeltemperatur. Det skapar ännu inga verkliga styrförslag: modellidentifiering återstår. Verklig väderprognos visas separat.
 - CSV-granskning visar tidsperioder, värdegränser, ogiltiga rader och största intervall. Filen tränar ingen modell och sparas inte.
 - Ingen kod skickar kommandon till Ohmigo, Roth eller PID. Aktiv drift stöds inte.
 
@@ -28,7 +32,7 @@ PYTHONPATH=mpc_heat_controller python3 -m unittest discover -s tests -v
 
 ## Apppaketering
 
-Appen ligger i `mpc_heat_controller/`, med `config.yaml` och `Dockerfile`. Repositoryts rot innehåller `repository.yaml` för Home Assistants appbutik. Containerinstallation och Ingress har ännu inte testats i Home Assistant 2026.9.1.
+Appen ligger i `mpc_heat_controller/`, med `config.yaml` och `Dockerfile`. Repositoryts rot innehåller `repository.yaml` för Home Assistants appbutik. Användaren har bekräftat fungerande installation och webbgränssnitt för 0.1.0 i HA 2026.9.1. Ny prognoshämtning i 0.2.0 är testad med simulerade API-svar, men ännu inte verifierad mot användarens HA.
 
 ## Installera via Home Assistant
 
@@ -43,7 +47,7 @@ Repositoryt måste vara åtkomligt för Home Assistant. Denna version är för u
 ## Nästa implementation
 
 1. Egna HA-entiteter via MQTT Discovery, med gemensam konfiguration för UI och börvärde samt livscykel/availability. Ännu inte implementerat.
-2. Väderadapter och validerad prognos från vald HA-väderentitet. Guiden sparar för närvarande endast valet.
+2. Vidare utvärdering av prognoskvalitet mot verklig utetemperatur.
 3. Historikmappning, modellidentifiering på träningsperiod och validering på separat period. Begränsade historiska styrsignaler måste skiljas från vad pumpen faktiskt mottog.
 4. Verklig MPC i skuggläge med loggning. Produktionsregulator, automatisk modellträning och prestandaverifiering på Pi återstår.
 5. Aktiv styrning först efter separat beslut och verifiering av Ohmigos watchdog, signalålder och återgång.
