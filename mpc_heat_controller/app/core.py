@@ -5,7 +5,8 @@ import math
 DEFAULT = {"mode": "demo", "target": 21.5, "comfort_min": 21.0, "comfort_max": 22.0,
            "indoor": [], "outdoor": "", "supply": "", "return": "", "observe": [],
            "weather": "", "applied_signal": "", "signal_min": -15.0, "signal_max": 30.0, "max_step": 1.0,
-           "pi_kp": 2.0, "pi_ki": 0.1, "pi_limit": 10.0, "pi_rate": 2.0}
+           "pi_kp": 2.0, "pi_ki": 0.1, "pi_limit": 10.0, "pi_rate": 2.0,
+           "watchdog_verified": False, "watchdog_seconds": 0, "exclusive_writer_confirmed": False, "old_automation": ""}
 
 def validate(raw):
     if not isinstance(raw, dict) or set(raw) - set(DEFAULT):
@@ -19,6 +20,12 @@ def validate(raw):
             raise ValueError("Ogiltigt numeriskt värde: " + k)
     if not (0 <= c['pi_kp'] <= 20 and 0 <= c['pi_ki'] <= 5 and 0 < c['pi_limit'] <= 30 and 0 < c['pi_rate'] <= 20):
         raise ValueError('PI-parametrar ligger utanför tillåtna gränser')
+    if any(type(c[k]) is not bool for k in ('watchdog_verified','exclusive_writer_confirmed')):
+        raise ValueError('Ogiltig bekräftelse')
+    if type(c['watchdog_seconds']) is not int or not 0<=c['watchdog_seconds']<=86400:
+        raise ValueError('Ange watchdog-timeout i hela sekunder')
+    if not isinstance(c['old_automation'],str) or (c['old_automation'] and not c['old_automation'].startswith('automation.')):
+        raise ValueError('Välj den gamla automationen')
     if not 7 <= c["comfort_min"] <= c["target"] <= c["comfort_max"] <= 35:
         raise ValueError("Börvärdet måste ligga inom komfortintervallet 7–35 °C")
     if not -40 <= c["signal_min"] < c["signal_max"] <= 50 or not 0 < c["max_step"] <= 5:

@@ -1,43 +1,37 @@
-# MPC Heat Controller
+# MPC Heat Controller 0.6.0
 
-Förhandsversion 0.5.0. Öppna webbgränssnittet via Home Assistant.
+## Grundläge och aktiv PI
 
-## PI i skuggläge
+Appen börjar med skrivning avstängd efter varje omstart, även efter uppdatering. Demo visar syntetiska data. Skuggläge beräknar PI med verkliga givare och loggar utan skrivning. Aktiv PI är en separat, tillfällig aktivering från översikten.
 
-PI kör automatiskt i skuggläge när alla valda reglergivare och utegivaren är giltiga. Inställningarna ligger under Komfort i installationsguiden. Startvärdena Kp=2 och Ki=0,1 är endast exempel för utvärdering, inte injustering av huset.
+## Förbered överlämning
 
-Temperaturfel = börvärde minus inomhusmedelvärde. P = Kp × fel. I ökar med Ki × fel × förfluten tid i timmar. Föreslagen utetemperatur är verklig utetemperatur minus (P+I), med begränsningar. Positivt P/I betyder värmebehov och negativ utetemperaturkompensation. Maximal kompensation begränsar P+I, medan signal_min/max sätter absoluta utgångsgränser. Om verklig utetemperatur ligger utanför de absoluta gränserna prioriteras dessa; den visade faktiska kompensationen kan då överstiga kompensationsgränsen.
+1. Välj skuggläge, rumsgivare och verklig utegivare. Välj Ohmigos number-entitet som inställt värde. Giltiga min/max/step och °C krävs på entiteten.
+2. Ställ in PI och absoluta signalgränser. Startvärden Kp=2 och Ki=0,1 är exempel, inte injusterade parametrar.
+3. Verifiera på hårdvaran att uteblivna temperaturkommandon ger fallback till riktig utegivare och att upprepade oförändrade kommandon håller watchdog vid liv. Ange den verifierade timeouten i sekunder, minst 180. Programmet kan inte verifiera hårdvarans beteende åt dig.
+4. Stäng av gamla MQTT-automationen och alla andra skrivare. Välj automationen i guiden. Appen kontrollerar att den är avstängd inför varje skrivning; andra skrivare kan inte säkert upptäckas.
+5. Spara. På översikten väljer du Aktivera PI-styrning och bekräftar verklig skrivning. Att installera eller spara aktiverar aldrig PI.
 
-PI har egen ändringshastighet (standard 2 °C/timme); max_step gäller fortfarande enbart MPC-demon. Integreringen pausas när den skulle förstärka en begränsning, även ändringshastighetsbegränsningen. I-delen har dessutom en egen gräns lika med maximal kompensation.
+Aktiv PI skriver via number.set_value ungefär varje minut plus nätverks- och beräkningstid, även när temperaturen är oförändrad. Utgången följer entitetens steg samt appens absoluta gränser och ändringshastighet. Små ändringar ackumuleras tills ett helt steg ryms inom ändringsgränsen. HA:s lyckade servicesvar är inte kvittens från pumpen.
 
-Vid första beräkningen startar förslaget från Ohmigos inställda temperatur om giltig, annars verklig utetemperatur, begränsat till absoluta signalgränser. Nästa beräkning flyttar förslaget med tillåten ändringshastighet. Tillståndet hålls i minnet och I-delen nollställs vid omstart, databortfall, byte till demo, relevanta inställningsändringar eller ett beräkningsuppehåll över 15 minuter. Integrering använder monoton tid och räknar inte ikapp uppehåll.
+## Stopp, fel och omstart
 
-PI-resultat loggas i pi_samples i mätloggens databas i 90 dagar. Ingen PI-signal skickas till Home Assistant eller Ohmigo. Detta är ännu inte en produktionsregulator och ersätter inte extern PID. Verifiering av watchdog, säker överlämning och aktiv styrning återstår.
+Stoppa PI upphör med nya kommandon. Ett redan pågående HTTP-anrop kan behöva avslutas först (timeout 15 sekunder). Ingen direkt bypass eller återgångssignal skickas: Ohmigos verifierade watchdog måste ge fallback när kommandona upphör. Stoppa appen i HA om webbgränssnittets stopp inte kan bekräftas. Återaktivera inte gamla automationen förrän nya appens skrivning stoppats.
 
-Installationsguiden låter dig välja temperaturgivare och komfortmål. I skuggläge läser appen valda givare via Home Assistants interna API. Ingen separat token behövs.
+Vid ogiltiga eller äldre än två timmar rapporterade reglergivare, HA-fel, loggningsfel, återaktiverad gammal automation, ändrade inställningar eller oväntat utgångsvärde stoppas fortsatt skrivning och ny aktivering krävs. Automatisk återaktivering efter omstart stöds inte. Väderfel påverkar inte PI, som använder verklig utegivare. Utgångens inställda värde kan vara oförändrat länge; dess färska avläsning från HA används vid överlämning men visar inte om pumpen är i fallback.
 
-Demo använder ett syntetiskt exempelhus och exempelväder. Den separata vädertabellen visar verklig timprognos från vald väderentitet, exempelvis Met.no. Ingen väderdata blandas in i den syntetiska inomhusprognosen.
+## PI-beräkning
 
-Skuggläget visar mätvärden och loggar dem var femte minut i `/data/measurements.sqlite`, tillsammans med konfigurationen. Loggningen fungerar även med stängt webbgränssnitt. Rader äldre än 90 dagar rensas. Saknade eller gamla värden märks i loggen, inte fylls i. Rum valda för uppföljning ingår inte i regleringens medeltemperatur.
+Fel = börvärde minus rumsgivarnas medeltemperatur. P = Kp × fel. I ökar med Ki × fel × timmar. Utgång = verklig utetemperatur minus P och I. Positivt värmebehov ger lägre simulerad utetemperatur. Kompensationsgräns, absoluta signalgränser och ändringshastighet tillämpas. Absoluta gränser prioriteras om verklig utetemperatur ligger utanför dem. Integrering fryses när den skulle förstärka en begränsning; I begränsas även separat.
 
-Väder hämtas var 30:e minut via `weather.get_forecasts` med typen `hourly`. Vid fel försöker appen igen vid nästa insamling. Tidpunkten i UI anger när appen hämtade prognosen, inte när leverantören skapade den. Enheter utan timprognos ger ett felmeddelande. Givare som inte rapporterat på två timmar markeras som gamla; gränsen är tills vidare fast.
+I nollställs vid datafel, omstart, relevanta inställningsändringar, demo eller beräkningsuppehåll över 15 minuter. Vid aktivering startar PI från giltigt avläst Ohmigo-värde inom gränserna och ändrar därefter gradvis. Regulatorn är inte en hårdvarusäkerhetsfunktion och behöver verifieras på installationen innan obevakad drift.
 
-Egna HA-entiteter och en kalibrerad MPC återstår. Appen skickar inga kommandon till värmepumpen.
+## Loggning och modeller
 
-Inställningarna lagras i appens beständiga datakatalog. CSV-granskning sparar inte filen och tränar inte modellen.
+Mätvärden och konfiguration sparas i /data/measurements.sqlite, PI-resultat i tabellen pi_samples, med 90 dagars retention. Insamling sker cirka var femte minut i skuggläge och varje minut vid aktiv PI, även när UI är stängt. Kommandostatus visas separat. Uppföljningsrum ingår inte i temperaturmedelvärdet.
 
-## Offlineutvärdering av husmodell
+Väderprognos hämtas var 30:e minut från vald HA-entitet med hourly via weather.get_forecasts. Hämtningstid är inte leverantörens publiceringstid.
 
-Granska CSV under Historik, välj därefter rumsgivare, verklig utetemperatur och historisk beräknad styrsignal. Välj en gemensam vinterperiod (datum i UTC) och klicka Anpassa och validera offline. Minst 240 kompletta timmar krävs; längre perioder behövs för meningsfull bedömning.
+Historikvyn kan granska CSV och jämföra enkel modell med fördröjningsmodell. Senaste lyckade CSV, givarval och resultat sparas i /data/model.sqlite. Alla modeller och horisonter använder gemensamma 24-timmarsfönster med sex timmars förhistorik. Träning använder första 70 procenten av kompletta timmar; senare data används för validering. Timmedel är aritmetiska, luckor fylls inte. Fördröjningsmodellen har fast ridge=0,01.
 
-Modellen beskriver nästa timmes temperaturförändring som en linjär funktion av inne-, ute- och beräknad utetemperatur. Timmedel räknas från tillgängliga rader. Det är inte tidsvägda medel av tillståndsändringar; välj helst en enhetlig period med timstatistik. Inga luckor fylls. Träningsperioden utgör de första 70 procenten av kompletta timmar och valideringen de sista 30 procenten. Prognoserna rullas fram rekursivt utan framtida rumstemperaturer som indata.
-
-Valideringen använder däremot kända framtida historiska utetemperaturer och styrsignaler. Den prövar inte prognosfel i vädertjänsten eller alternativ MPC-styrning. Testfönstren överlappar och är inte oberoende försök. Styrsignalens historiska begränsningar och pumpens interna reglering är ännu inte identifierade. Därför aktiveras ingen modell automatiskt. Senaste lyckade resultat, givarval och CSV sparas i /data/model.sqlite och återställs vid omladdning och omstart. En ny lyckad utvärdering ersätter den tidigare. Misslyckad utvärdering behåller tidigare sparat underlag.
-
-## Modelljämförelse i 0.4.0
-
-Den enkla modellen jämförs med en kandidat som även använder temperaturförändringar under de senaste två timmarna och styrsignalens senaste sex timmar. Alla modeller tränas på samma rader. Alla fyra horisonter utvärderas från samma starttider med kompletta 24-timmarsfönster och sex timmars förhistorik. Därför kan antalet testfönster och felvärden skilja sig från 0.3.0. Kandidaten använder standardiserade variabler och en fast ridge-regularisering på 0,01, utan anpassning mot valideringsdata. Ingen kandidat aktiveras automatiskt.
-
-## Ohmigos inställda värde
-
-Välj sensor eller number-entitet i installationsguiden. Appen läser och loggar den på samma sätt som temperaturgivarna. Ett inställt värde är inte en kvittens på vad pumpen läst och visar inte säkert watchdogens fallback. Värdet påverkar inte regleringens rumstemperaturmedelvärde.
+Historiska framtida väder- och styrvärden används i offlineutvärderingen, inte historiska väderprognoser eller alternativa MPC-kommandon. Ingen MPC-modell aktiveras automatiskt. Egna HA-entiteter återstår.

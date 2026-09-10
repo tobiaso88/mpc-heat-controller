@@ -1,73 +1,34 @@
 # MPC Heat Controller
 
-Separat Home Assistant-app för komfortvärme. Målmiljö: Home Assistant OS/Core 2026.9.1, Raspberry Pi 4 (aarch64), 8 GB RAM.
+Home Assistant-app för komfortvärme med eget webbgränssnitt, PI och experimentell modellutvärdering. Mål: HA OS 2026.9.1, Raspberry Pi 4 aarch64, 8 GB.
 
-## Version 0.5.0
+## Version 0.6.0
 
-Ny PI-regulator kör i skuggläge med konfigurerbar P/I, anti-windup, kompensations- och ändringsgränser. Resultat visas och loggas. Alla värden är förslag; inga temperaturkommandon skickas. Läs DOCS.md för beräkning och återställningsregler.
+- Installationsguide med valbara givare, komfortmål, väderkälla och PI-parametrar.
+- PI i skuggläge eller uttryckligen aktiverad skrivning till Ohmigos number-entitet.
+- Aktiv styrning är alltid av efter installation, omstart, fel och sparade inställningar.
+- Aktiv PI kräver verifierad kommandowatchdog och avstängd gammal automation. Läs [instruktionerna](mpc_heat_controller/DOCS.md) före överlämning.
+- Timprognos, mätloggning och sparad offlinejämförelse av husmodeller. Ingen aktiv MPC ännu.
 
-## Modellunderlag från 0.4.0
+## Installera
 
-Sparar senaste lyckade CSV-underlag, givarval och modellresultat. Jämför enkla och fördröjda modeller på identiska testfönster. Valbar Ohmigo-entitet läses och loggas utan skrivning.
+Lägg till https://github.com/tobiaso88/mpc-heat-controller under Inställningar → Appar → Installera app → Repositories. Installera eller uppdatera MPC Heat Controller och öppna webbgränssnittet.
 
-## Modellutvärdering
+## Lokal utveckling
 
-Historikvyn kan nu anpassa en enkel modell med valbara historiska entiteter och separat senare valideringsperiod. Fel på 1–24 timmar jämförs med oförändrad temperatur. Modellen aktiveras inte automatiskt och resultaten sparas lokalt efter lyckad utvärdering.
-
-## Datainsamling från 0.2.0
-
-Timprognos hämtas från vald HA-väderentitet. Alla valda temperaturgivare visas med datastatus. I skuggläge loggas mätvärden och konfiguration var femte minut till lokal SQLite med 90 dagars retention, även när webbläsaren är stängd.
-
-## Första körbara grund
-
-- Svenskt webbgränssnitt med installationsguide, valbara givare och beständiga inställningar.
-- Home Assistant-entiteter läses via Supervisor-proxyn när appen körs i HA. Inga installationsspecifika entitets-ID:n är hårdkodade.
-- Demo med en enkel termisk exempelmodell och begränsad beam-search-planering över 24 timmar. Modellparametrarna är **inte identifierade från huset**. Exempelvädret är syntetiskt.
-- Skuggläge läser valda givare och visar medeltemperatur. Det skapar ännu inga verkliga styrförslag: modellidentifiering återstår. Verklig väderprognos visas separat.
-- CSV-granskning visar tidsperioder, värdegränser, ogiltiga rader och största intervall. Filen tränar ingen modell och sparas inte.
-- Ingen kod skickar kommandon till Ohmigo, Roth eller PID. Aktiv drift stöds inte.
-
-## Kör lokalt
-
-Python 3.11 eller senare, utan tredjepartsberoenden:
+Python 3.11 eller senare, inga tredjepartsberoenden:
 
 ```sh
 cd mpc_heat_controller
 python3 -m app.server
 ```
 
-Öppna http://127.0.0.1:8099. Inställningar sparas i `data/settings.json`. `MPC_DATA` kan ange annan lagringsplats. Lokal server binds till loopback; publicera den inte direkt på nätet. Docker-konfigurationen är avsedd för HA:s interna Ingress-nät utan exponerad port.
+Öppna http://127.0.0.1:8099. Inställningar lagras i data/ eller MPC_DATA. Lokal bindning är endast loopback. Docker-versionen använder HA Ingress utan exponerad extern port.
+
+Tester från repositoryts rot:
 
 ```sh
 PYTHONPATH=mpc_heat_controller python3 -m unittest discover -s tests -v
 ```
 
-## Apppaketering
-
-Appen ligger i `mpc_heat_controller/`, med `config.yaml` och `Dockerfile`. Repositoryts rot innehåller `repository.yaml` för Home Assistants appbutik. Användaren har bekräftat fungerande installation och webbgränssnitt för 0.1.0 i HA 2026.9.1. Ny prognoshämtning i 0.2.0 är testad med simulerade API-svar, men ännu inte verifierad mot användarens HA.
-
-## Installera via Home Assistant
-
-1. Öppna Inställningar → Appar → Installera app.
-2. Öppna menyn med tre punkter och välj Repositories.
-3. Lägg till `https://github.com/tobiaso88/mpc-heat-controller`.
-4. Välj MPC Heat Controller och Installera. Containern byggs på din HA-enhet.
-5. Starta appen och välj Öppna webbgränssnitt. Börja i Demo.
-
-Repositoryt måste vara åtkomligt för Home Assistant. Denna version är för utvärdering och kan inte styra pumpen.
-
-## Nästa implementation
-
-1. Egna HA-entiteter via MQTT Discovery, med gemensam konfiguration för UI och börvärde samt livscykel/availability. Ännu inte implementerat.
-2. Vidare utvärdering av prognoskvalitet mot verklig utetemperatur.
-3. Historikmappning, modellidentifiering på träningsperiod och validering på separat period. Begränsade historiska styrsignaler måste skiljas från vad pumpen faktiskt mottog.
-4. Verklig MPC i skuggläge med loggning. Produktionsregulator, automatisk modellträning och prestandaverifiering på Pi återstår.
-5. Aktiv styrning först efter separat beslut och verifiering av Ohmigos watchdog, signalålder och återgång.
-
-## Referenser
-
-- https://developers.home-assistant.io/docs/apps/configuration/
-- https://developers.home-assistant.io/docs/apps/communication/
-- https://www.home-assistant.io/integrations/mqtt/
-
-PID-projektet är separat och har inte ändrats. Privata planeringsanteckningar och historikfiler ingår inte i repositoryt.
+Aktiv PI är testad med simulerade HA-svar. Ingen verklig utrustning har styrts av utvecklingstesterna. Hårdvarans watchdog och den aktiva driften behöver verifieras på installationen. PID-projektet är separat och orört. Privata historikfiler publiceras inte.

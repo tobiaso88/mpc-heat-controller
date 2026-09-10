@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from .core import DEFAULT, validate, simulate
-from .telemetry import Collector, readings
+from .telemetry import Collector, readings, request as ha_request
 from .model import evaluate
 from . import model_store
 
@@ -47,7 +47,7 @@ def ha_states():
     req = urllib.request.Request("http://supervisor/core/api/states", headers={"Authorization": "Bearer " + token})
     with urllib.request.urlopen(req, timeout=10) as response:
         states = json.load(response)
-    return {"connected": True, "entities": [s for s in states if s["entity_id"].startswith(("sensor.", "weather.", "number."))]}
+    return {"connected": True, "entities": [s for s in states if s["entity_id"].startswith(("sensor.", "weather.", "number.", "automation."))]}
 
 def status(c, source):
     if c["mode"] == "demo":
@@ -122,8 +122,26 @@ class Handler(BaseHTTPRequestHandler):
             size = int(self.headers.get("Content-Length", 0))
             if not 0 < size <= 20_000_000: return self.reply(413, {"error": "Filgräns 20 MB"})
             body = self.rfile.read(size)
+            if self.path == '/api/control/stop':
+                if COLLECTOR:COLLECTOR.control.stop()
+                return self.reply(200, {'active':False})
+            if self.path == '/api/control/start':
+                if not COLLECTOR:raise ValueError('Insamlingen är inte startad')
+                payload=json.loads(body)
+                if payload.get('confirm') is not True:raise ValueError('Bekräfta start av verklig styrning')
+                with COLLECTOR.cycle_lock:
+                    c=config();states=ha_request('states')
+                    COLLECTOR.control.arm(c,states,readings(c,states))
+                    COLLECTOR.pi.reset()
+                    COLLECTOR.wake.set()
+                return self.reply(200,COLLECTOR.control.get())
             if self.path == "/api/config":
-                c = validate(json.loads(body)); save(c)
+                c = validate(json.loads(body))
+                if COLLECTOR:
+                    with COLLECTOR.cycle_lock:
+                        COLLECTOR.control.stop('Inställningar sparade. PI måste aktiveras igen för verklig styrning.')
+                        save(c)
+                else:save(c)
                 if COLLECTOR: COLLECTOR.wake.set()
                 return self.reply(200, c)
             if self.path == "/api/history": return self.reply(200, inspect_csv(body))

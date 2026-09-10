@@ -6,6 +6,7 @@ import sqlite3
 import threading
 import urllib.request
 from .pi import PI
+from .control import Control
 from datetime import datetime, timezone, timedelta
 
 def now():
@@ -80,12 +81,23 @@ class Collector:
         self.forecast = {'points': [], 'message': 'Ingen väderentitet vald.'}
         self.wake = threading.Event()
         self.pi = PI()
+        self.control = Control(request)
+        self.cycle_lock = threading.RLock()
 
     def cycle(self):
+        with self.cycle_lock:
+            self._cycle()
+
+    def _cycle(self):
         c = self.config()
         try:
             states = request('states')
             items = readings(c, states)
+            if self.control.get()['active']:
+                # A number state can remain unchanged for days; freshly read state is the initial setpoint, not a temperature sensor.
+                self.control.target(c,states)
+                for item in items:
+                    if item['entity']==c['applied_signal'] and item['value'] is not None:item['quality']='OK'
             entity = c['weather']
             if entity != self.weather_key:
                 self.forecast = {'points': [], 'message': 'Ingen väderentitet vald.'}
@@ -105,7 +117,11 @@ class Collector:
             snapshot['pi'] = self.pi.step(c, items)
             if c['mode'] == 'shadow':
                 self.store(stamp, items, c, snapshot['pi'])
+            self.control.send(c,states,snapshot['pi'])
+            if self.control.get()['active']:
+                snapshot['pi']['message']='Aktiv PI. Temperaturkommandon skickas till vald utgång; se styrstatus.'
         except Exception:
+            if self.control.get()['active']:self.control.stop('PI stoppad vid databortfall eller loggningsfel. Inga fler kommandon skickas; watchdog ska återgå till riktig utegivare.')
             self.pi.reset()
             snapshot = {'readings': [], 'forecast': {'points': [], 'message': 'Väderprognosen är inte tillgänglig.'},
                         'sampled_at': None, 'error': 'Kunde inte läsa eller logga data. Kontrollera HA-anslutningen och ledigt lagringsutrymme.', 'logging': False}
@@ -122,13 +138,15 @@ class Collector:
             db.execute('DELETE FROM pi_samples WHERE time < ?', ((now()-timedelta(days=90)).isoformat(),))
 
     def get(self):
-        with self.lock: return json.loads(json.dumps(self.snapshot))
+        with self.lock: result=json.loads(json.dumps(self.snapshot))
+        result['control']=self.control.get()
+        return result
 
     def run(self):
         while True:
             self.wake.clear()
             self.cycle()
-            self.wake.wait(300)
+            self.wake.wait(60 if self.control.get()['active'] else 300)
 
     def start(self):
         threading.Thread(target=self.run, daemon=True).start()

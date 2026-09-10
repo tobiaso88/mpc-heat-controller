@@ -1,3 +1,12 @@
+# 0.6.0
+
+- Aktiv PI kan startas uttryckligen från översikten och skriver till vald number-entitet via HA.
+- Kräver giltiga givare och utgång, verifierad kommandowatchdog (minst 180 s), bekräftad ensam skrivare och avstängd namngiven gammal automation.
+- Upprepar temperaturkommandon ungefär varje minut, anpassade till utgångens steg och signalens ändringsgräns.
+- Stoppar skrivning vid fel, återaktiverad gammal automation, ändrade inställningar eller oväntad utgångsändring. Ingen automatisk återstart efter fel eller appomstart.
+- Stoppa-knapp upphör med kommandon; hårdvarans verifierade watchdog ansvarar för fallback. Ingen direkt givarbypass implementerad.
+- Befintlig skugglägeskonfiguration uppgraderas med aktiv styrning avstängd.
+
 # 0.5.0
 
 - Ny PI-regulator i skuggläge med inställningar för Kp, Ki, kompensationsgräns och ändringshastighet.
