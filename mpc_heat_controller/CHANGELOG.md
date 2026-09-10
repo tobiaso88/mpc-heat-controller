@@ -1,3 +1,11 @@
+# 0.3.0
+
+- Historikimport med val av rumsgivare, verklig utetemperatur, historisk styrsignal och datumintervall.
+- Anpassning av en enkel linjär modell till de första 70 procenten av kompletta timmar och validering på senare data.
+- Visar medelabsolutfel vid 1, 6, 12 och 24 timmar, jämfört med oförändrad temperatur. Inga luckor fylls.
+- Tydligare rubrik och tomstatus för inomhusprognosen.
+- Modellen är endast en offlinekandidat och aktiveras inte för prognos eller styrning.
+
 # 0.2.0
 
 - Hämtar timprognos från vald HA-väderentitet var 30:e minut, med tidskontroll och Celsius-konvertering.

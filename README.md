@@ -2,7 +2,11 @@
 
 Separat Home Assistant-app för komfortvärme. Målmiljö: Home Assistant OS/Core 2026.9.1, Raspberry Pi 4 (aarch64), 8 GB RAM.
 
-## Version 0.2.0
+## Version 0.3.0
+
+Historikvyn kan nu anpassa en enkel modell med valbara historiska entiteter och separat senare valideringsperiod. Fel på 1–24 timmar jämförs med oförändrad temperatur. Modellen aktiveras inte automatiskt och resultaten sparas inte.
+
+## Datainsamling från 0.2.0
 
 Timprognos hämtas från vald HA-väderentitet. Alla valda temperaturgivare visas med datastatus. I skuggläge loggas mätvärden och konfiguration var femte minut till lokal SQLite med 90 dagars retention, även när webbläsaren är stängd.
 

@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from .core import DEFAULT, validate, simulate
 from .telemetry import Collector, readings
+from .model import evaluate
 
 DATA = Path(os.environ.get("MPC_DATA", "./data"))
 STATIC = Path(__file__).parent / "static"
@@ -123,6 +124,9 @@ class Handler(BaseHTTPRequestHandler):
                 if COLLECTOR: COLLECTOR.wake.set()
                 return self.reply(200, c)
             if self.path == "/api/history": return self.reply(200, inspect_csv(body))
+            if self.path == "/api/model/evaluate":
+                payload = json.loads(body)
+                return self.reply(200, evaluate(payload['csv'], payload['mapping']))
             self.reply(404, {"error": "Åtgärden finns inte"})
         except (ValueError, TypeError, KeyError, UnicodeError) as e:
             self.reply(400, {"error": str(e)})

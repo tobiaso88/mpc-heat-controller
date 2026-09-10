@@ -1,6 +1,6 @@
 # MPC Heat Controller
 
-Förhandsversion 0.2.0. Öppna webbgränssnittet via Home Assistant.
+Förhandsversion 0.3.0. Öppna webbgränssnittet via Home Assistant.
 
 Installationsguiden låter dig välja temperaturgivare och komfortmål. I skuggläge läser appen valda givare via Home Assistants interna API. Ingen separat token behövs.
 
@@ -13,3 +13,11 @@ Väder hämtas var 30:e minut via `weather.get_forecasts` med typen `hourly`. Vi
 Egna HA-entiteter och en kalibrerad MPC återstår. Appen skickar inga kommandon till värmepumpen.
 
 Inställningarna lagras i appens beständiga datakatalog. CSV-granskning sparar inte filen och tränar inte modellen.
+
+## Offlineutvärdering av husmodell
+
+Granska CSV under Historik, välj därefter rumsgivare, verklig utetemperatur och historisk beräknad styrsignal. Välj en gemensam vinterperiod (datum i UTC) och klicka Anpassa och validera offline. Minst 240 kompletta timmar krävs; längre perioder behövs för meningsfull bedömning.
+
+Modellen beskriver nästa timmes temperaturförändring som en linjär funktion av inne-, ute- och beräknad utetemperatur. Timmedel räknas från tillgängliga rader. Det är inte tidsvägda medel av tillståndsändringar; välj helst en enhetlig period med timstatistik. Inga luckor fylls. Träningsperioden utgör de första 70 procenten av kompletta timmar och valideringen de sista 30 procenten. Prognoserna rullas fram rekursivt utan framtida rumstemperaturer som indata.
+
+Valideringen använder däremot kända framtida historiska utetemperaturer och styrsignaler. Den prövar inte prognosfel i vädertjänsten eller alternativ MPC-styrning. Testfönstren överlappar och är inte oberoende försök. Styrsignalens historiska begränsningar och pumpens interna reglering är ännu inte identifierade. Därför aktiveras ingen modell automatiskt. Resultat och modell finns endast i aktuell granskning och sparas inte vid omladdning.
