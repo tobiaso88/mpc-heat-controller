@@ -1,0 +1,76 @@
+blueprint:
+  name: MPC Heat Controller – meddela när PI är inaktiv
+  description: >-
+    Skickar en pushnotis när MPC Heat Controllers PI-status inte har varit `active`
+    under vald tid. Omfattar `waiting`, `stopped`, `error`, `unknown` och `unavailable`.
+    Fördröjningen undviker notiser under normala, korta återstarter.
+  domain: automation
+  author: MPC Heat Controller
+  source_url: https://github.com/tobiaso88/mpc-heat-controller/blob/main/home_assistant/blueprints/automation/mpc_heat_controller/pi_inactive_notification.yaml
+  homeassistant:
+    min_version: 2024.10.0
+  input:
+    pi_status:
+      name: PI-status
+      description: Välj sensorn MPC Heat Controller PI-status.
+      default: sensor.mpc_heat_controller_pi_status
+      selector:
+        entity:
+          filter:
+            domain: sensor
+    notify_device:
+      name: Telefon att notifiera
+      description: Välj en telefon med Home Assistant Companion-appen.
+      selector:
+        device:
+          filter:
+            integration: mobile_app
+    delay_minutes:
+      name: Fördröjning
+      description: Hur länge PI får vara inaktiv innan notisen skickas.
+      default: 3
+      selector:
+        number:
+          min: 1
+          max: 30
+          step: 1
+          unit_of_measurement: min
+          mode: slider
+
+variables:
+  pi_entity: !input pi_status
+
+triggers:
+  - trigger: state
+    id: status_changed
+    entity_id: !input pi_status
+    not_to: active
+    for:
+      minutes: !input delay_minutes
+  - trigger: homeassistant
+    id: home_assistant_started
+    event: start
+
+actions:
+  - if:
+      - condition: trigger
+        id: home_assistant_started
+    then:
+      - delay:
+          minutes: !input delay_minutes
+  - condition: template
+    value_template: "{{ states(pi_entity) != 'active' }}"
+  - variables:
+      pi_state: "{{ states(pi_entity) }}"
+      pi_message: "{{ state_attr(pi_entity, 'message') or 'Ingen ytterligare förklaring finns.' }}"
+  - alias: Skicka pushnotis
+    domain: mobile_app
+    type: notify
+    device_id: !input notify_device
+    title: PI-styrningen är inaktiv
+    message: >-
+      MPC Heat Controller har status {{ pi_state }}. {{ pi_message }}
+      Kontrollera styrningen och Ohmigos watchdog i Home Assistant.
+
+mode: restart
+max_exceeded: silent

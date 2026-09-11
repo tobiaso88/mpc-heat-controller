@@ -2,6 +2,7 @@
 
 - Färdig Home Assistant-dashboard utan HACS-beroenden för driftstatus, temperaturer, styrsignal, historik och PI-detaljer.
 - Egna HA-sensorer för verklig utetemperatur, Ohmigos inställda temperatur, pumpens avlästa utetemperatur, framledning och retur gör dashboarden oberoende av installationens råa entity-ID:n.
+- Valbar Home Assistant-blueprint skickar pushnotis till vald Companion-app om PI förblir inaktiv och kontrollerar även status efter HA-omstart.
 
 # 0.9.7
 
