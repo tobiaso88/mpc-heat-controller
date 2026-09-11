@@ -87,7 +87,8 @@ class ControlTests(unittest.TestCase):
         x.send(c,s,{'signal':5},clock=t)
         s[1]['state']='on'
         x.send(c,s,{'signal':5},clock=t+60)
-        self.assertFalse(x.get()['active']);self.assertEqual(r.call_count,1)
+        self.assertFalse(x.get()['active'])
+        self.assertEqual(sum(call.args[0]=='services/number/set_value' for call in r.call_args_list),1)
 
     def test_delayed_ha_state_after_changed_command_gets_short_grace(self):
         c,s,i,r,x=self.setup_control();t=1000
@@ -114,6 +115,16 @@ class ControlTests(unittest.TestCase):
         x.send(c,s,{'signal':4.5},clock=t+60)
         self.assertFalse(x.get()['active'])
         self.assertIn('från 4.5 till 6',x.get()['message'])
+
+    def test_fault_notification_is_scoped_and_failure_is_harmless(self):
+        c,s,i,r,x=self.setup_control()
+        x.notify_fault('PI stoppad: testfel.')
+        r.assert_called_once_with('services/persistent_notification/create',{
+            'notification_id':'mpc_heat_controller_pi_fault',
+            'title':'MPC Heat Controller: PI har stoppats',
+            'message':'PI stoppad: testfel. Kontrollera PI-status innan styrningen aktiveras igen.'})
+        r.side_effect=OSError()
+        x.notify_fault('PI stoppad: nytt testfel.')
 
     def test_off_grid_handover_and_short_watchdog(self):
         c,s,i,r,x=self.setup_control();c['watchdog_seconds']=300

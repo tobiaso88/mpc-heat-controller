@@ -85,6 +85,16 @@ class Control:
             self.persist(None)
             self.ready_since=None
             self.info={'active':False,'fault':fault,'message':message}
+        if fault:threading.Thread(target=self.notify_fault,args=(message,),daemon=True).start()
+
+    def notify_fault(self,message):
+        try:
+            self.request('services/persistent_notification/create',{
+                'notification_id':'mpc_heat_controller_pi_fault',
+                'title':'MPC Heat Controller: PI har stoppats',
+                'message':message+' Kontrollera PI-status innan styrningen aktiveras igen.'})
+        except Exception:
+            pass
 
     def target(self,c,states):
         by_id={s['entity_id']:s for s in states}

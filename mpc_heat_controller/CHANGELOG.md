@@ -1,3 +1,8 @@
+# 0.9.7
+
+- Ett låst PI-fel skapar automatiskt en beständig Home Assistant-notis. Manuell avstängning och normala väntelägen ger ingen felnotis.
+- Notifieringen körs separat och kan inte fördröja eller hindra säkerhetsstoppet.
+
 # 0.9.6
 
 - HA-entiteten får en kort, begränsad kvittensfrist efter ett ändrat kommando så att föregående tillstånd inte felaktigt tolkas som en annan skrivare. Ett avvikande tredje värde stoppar fortfarande PI direkt.

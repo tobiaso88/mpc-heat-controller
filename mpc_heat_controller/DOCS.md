@@ -1,4 +1,4 @@
-# MPC Heat Controller 0.9.6
+# MPC Heat Controller 0.9.7
 
 ## Grundläge och aktiv PI
 
@@ -18,7 +18,7 @@ Aktiv PI kontrollerar varje minut och skriver via number.set_value tidigast 300 
 
 Stoppa PI upphör med nya kommandon. Ett redan pågående HTTP-anrop kan behöva avslutas först (timeout 15 sekunder). Ingen direkt bypass eller återgångssignal skickas: Ohmigos verifierade watchdog måste ge fallback när kommandona upphör. Stoppa appen i HA om webbgränssnittets stopp inte kan bekräftas. Återaktivera inte gamla automationen förrän nya appens skrivning stoppats.
 
-Vid ogiltiga eller äldre än 24 timmar rapporterade reglergivare, HA-fel, loggningsfel, återaktiverad gammal automation, ändrade inställningar eller oväntat utgångsvärde stoppas fortsatt skrivning och ny aktivering krävs. Automatisk återstart kan väljas enligt avsnittet nedan. Väderfel påverkar inte PI, som använder verklig utegivare. Utgångens inställda värde kan vara oförändrat länge; dess färska avläsning från HA används vid överlämning men visar inte om pumpen är i fallback.
+Vid ogiltiga eller äldre än 24 timmar rapporterade reglergivare, HA-fel, loggningsfel, återaktiverad gammal automation, ändrade inställningar eller oväntat utgångsvärde stoppas fortsatt skrivning och ny aktivering krävs. Låsta PI-fel skapar också en beständig notis i Home Assistant; ett notisfel påverkar inte watchdog eller stoppet. Automatisk återstart kan väljas enligt avsnittet nedan. Väderfel påverkar inte PI, som använder verklig utegivare. Utgångens inställda värde kan vara oförändrat länge; dess färska avläsning från HA används vid överlämning men visar inte om pumpen är i fallback.
 
 ## PI-beräkning
 
