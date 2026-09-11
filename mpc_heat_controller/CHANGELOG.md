@@ -1,3 +1,7 @@
+# 0.9.4
+
+- Giltiga, tillgängliga givarvärden accepteras upp till 24 timmar. Automatisk återstart kräver inte en ny rapport efter omstart. Två stabila kontroller med minst 60 sekunders mellanrum och övriga startvillkor behålls.
+
 # 0.9.3
 
 - Automatisk återstart visar exakt blockerande givare eller utgångsvillkor. Säkerhetskraven behålls.

@@ -45,7 +45,7 @@ def readings(c, states):
                 quality, value = 'Fel enhet', None
             else:
                 age = (now() - datetime.fromisoformat(stamp.replace('Z', '+00:00'))).total_seconds()
-                quality = 'OK' if -60 <= age <= 7200 else 'Gammalt värde'
+                quality = 'OK' if -60 <= age <= 86400 else 'Rapporttid utanför tillåtet intervall (högst 24 h)'
                 if attrs.get('restored'):quality='Återställt värde, väntar på rapport'
         except (ValueError, TypeError, KeyError, AttributeError):
             value = None

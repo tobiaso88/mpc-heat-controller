@@ -13,7 +13,7 @@ class TemperatureCardTests(unittest.TestCase):
 
     def test_stale_is_labeled_and_missing_is_not_partial_mean(self):
         c=validate({'mode':'shadow','indoor':['sensor.in'],'outdoor':'sensor.out'})
-        state={'entity_id':'sensor.in','state':'21.4','attributes':{'unit_of_measurement':'°C'},'last_reported':(datetime.now(timezone.utc)-timedelta(hours=3)).isoformat()}
+        state={'entity_id':'sensor.in','state':'21.4','attributes':{'unit_of_measurement':'°C'},'last_reported':(datetime.now(timezone.utc)-timedelta(hours=25)).isoformat()}
         result=status(c,{'entities':[state]})
         self.assertEqual(result['temperature'],21.4);self.assertFalse(result['temperature_valid'])
         self.assertIn('Senast kända',result['temperature_message'])

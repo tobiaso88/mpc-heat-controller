@@ -18,7 +18,6 @@ class Control:
         self.data=data
         self.resume_settings=None
         self.ready_since=None
-        self.recovery_since=time.time()
         if data is not None and (data/'control.sqlite').exists():
             with sqlite3.connect(data/'control.sqlite') as db:
                 row=db.execute('SELECT settings FROM intent WHERE id=1').fetchone()
@@ -37,9 +36,8 @@ class Control:
 
     def pause(self,message):
         with self.lock:
-            if self.armed:self.recovery_since=time.time()
             self.armed=False;self.ready_since=None
-            self.info={'active':False,'fault':True,'message':message+' Inga kommandon skickas. Väntar på nya giltiga mätvärden.'}
+            self.info={'active':False,'fault':True,'message':message+' Inga kommandon skickas. Väntar på tillgängliga, giltiga mätvärden som är högst 24 timmar gamla.'}
 
     def resume(self,c,states,items):
         with self.lock:
@@ -60,7 +58,7 @@ class Control:
                         if stamp.tzinfo is None:raise ValueError()
                         if r['quality']!='OK' or r['value'] is None or not math.isfinite(r['value']):reason=r.get('quality','Ogiltigt värde')
                         elif raw.get(entity,{}).get('attributes',{}).get('restored'):reason='Återställt värde'
-                        elif stamp.timestamp()<self.recovery_since:reason='Ingen ny rapport efter omstart eller avbrott'
+                        elif not -60 <= time.time()-stamp.timestamp() <= 86400:reason='Rapporttid utanför tillåtet intervall (högst 24 h)'
                     except (KeyError,ValueError,TypeError,AttributeError):reason='Saknar giltig rapporttid'
                     if reason:blockers.append({'entity':entity,'reason':reason,'reported_at':r.get('reported_at')})
                 if blockers:

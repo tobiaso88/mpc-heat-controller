@@ -49,3 +49,16 @@ class TelemetryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d, patch('app.telemetry.request', side_effect=OSError('offline')):
             collector=Collector(lambda:validate({}),Path(d));collector.cycle()
             self.assertTrue(collector.get()['error']);self.assertEqual(collector.get()['forecast']['points'],[])
+
+    def test_24_hour_limit_and_unavailable_restored_values(self):
+        t=datetime.now(timezone.utc);c=validate({'outdoor':'sensor.out'})
+        s={'entity_id':'sensor.out','state':'5','attributes':{'unit_of_measurement':'°C'}}
+        with patch('app.telemetry.now',return_value=t):
+            for age,valid in [(23*3600,True),(86400,True),(86401,False),(-61,False)]:
+                s['last_updated']=(t-timedelta(seconds=age)).isoformat()
+                self.assertEqual(readings(c,[s])[0]['quality']=='OK',valid)
+            s['last_updated']=t.isoformat()
+            s['state']='unavailable'
+            self.assertIsNone(readings(c,[s])[0]['value'])
+            s['state']='5';s['attributes']['restored']=True
+            self.assertNotEqual(readings(c,[s])[0]['quality'],'OK')

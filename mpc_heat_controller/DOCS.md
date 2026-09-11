@@ -1,4 +1,4 @@
-# MPC Heat Controller 0.9.3
+# MPC Heat Controller 0.9.4
 
 ## Grundläge och aktiv PI
 
@@ -18,7 +18,7 @@ Aktiv PI skriver via number.set_value ungefär varje minut plus nätverks- och b
 
 Stoppa PI upphör med nya kommandon. Ett redan pågående HTTP-anrop kan behöva avslutas först (timeout 15 sekunder). Ingen direkt bypass eller återgångssignal skickas: Ohmigos verifierade watchdog måste ge fallback när kommandona upphör. Stoppa appen i HA om webbgränssnittets stopp inte kan bekräftas. Återaktivera inte gamla automationen förrän nya appens skrivning stoppats.
 
-Vid ogiltiga eller äldre än två timmar rapporterade reglergivare, HA-fel, loggningsfel, återaktiverad gammal automation, ändrade inställningar eller oväntat utgångsvärde stoppas fortsatt skrivning och ny aktivering krävs. Automatisk återstart kan väljas enligt avsnittet nedan. Väderfel påverkar inte PI, som använder verklig utegivare. Utgångens inställda värde kan vara oförändrat länge; dess färska avläsning från HA används vid överlämning men visar inte om pumpen är i fallback.
+Vid ogiltiga eller äldre än 24 timmar rapporterade reglergivare, HA-fel, loggningsfel, återaktiverad gammal automation, ändrade inställningar eller oväntat utgångsvärde stoppas fortsatt skrivning och ny aktivering krävs. Automatisk återstart kan väljas enligt avsnittet nedan. Väderfel påverkar inte PI, som använder verklig utegivare. Utgångens inställda värde kan vara oförändrat länge; dess färska avläsning från HA används vid överlämning men visar inte om pumpen är i fallback.
 
 ## PI-beräkning
 
@@ -40,7 +40,7 @@ Historiska framtida väder- och styrvärden används i offlineutvärderingen, in
 
 Kryssa i automatisk återstart i Förbered aktiv PI, spara och aktivera PI en gång. Att kryssa i eller spara startar aldrig styrningen på egen hand. Inställningen är av som standard vid uppgradering.
 
-Efter omstart eller tillfälligt avbrott krävs nya rapporter från alla reglergivare, utegivaren och vald framledning/retur, rapporterade efter omstarten eller avbrottet. Givarna måste vara giltiga i två kontroller med minst 60 sekunders mellanrum. Under hela väntan skickas inga kommandon. Ohmigo måste ha ett tillgängligt numeriskt tillstånd med rätt metadata, den gamla automationen måste vara avstängd och watchdogvillkoren uppfyllda. Uppföljningsrum och väderprognos behövs inte för PI och blockerar inte start. HA:s entitetstillstånd är inte ett oberoende bevis på pumpens eller MQTT-brokerns fysiska tillgänglighet. Watchdog behövs fortfarande.
+Efter omstart eller tillfälligt avbrott krävs tillgängliga och giltiga värden från alla reglergivare, utegivaren och vald framledning/retur. Rapporttiden får vara högst 24 timmar gammal och värdet får inte vara markerat som återställt. En ny rapport efter appens omstart krävs inte; oförändrade temperaturer accepteras. HA:s last_reported används om den finns, annars last_updated. Givarna måste vara giltiga i två kontroller med minst 60 sekunders mellanrum. Under hela väntan skickas inga kommandon. Ohmigo måste ha ett tillgängligt numeriskt tillstånd med rätt metadata, den gamla automationen måste vara avstängd och watchdogvillkoren uppfyllda. Uppföljningsrum och väderprognos behövs inte för PI och blockerar inte start. HA:s entitetstillstånd är inte ett oberoende bevis på pumpens eller MQTT-brokerns fysiska tillgänglighet. Watchdog behövs fortfarande.
 
 Tillfälliga givar-, kommunikations- och loggningsfel pausar och kan återupptas. Oväntad utgångsändring och konfigurationskonflikt vid skrivning kräver manuell aktivering. Manuellt stopp och sparade inställningar raderar återstartsönskemålet, även över omstart. Stoppa därför appen via PI-stoppknappen om du vill att den ska förbli avstängd efter en senare appstart.
 
@@ -58,7 +58,7 @@ Senast skickat värde är ett historiskt kommando till HA, inte kvittens från O
 
 Ett fel i publiceringen visas i webbgränssnittet och påverkar inte PI-loopen. Rapport om lyckad publicering betyder att HA accepterade MQTT-anropet, inte att appen kontrollerat entitetsregistret. Verifiera att enheten syns i HA efter första installationen.
 
-## Grafer och mobilgränssnitt i 0.9.3
+## Grafer och mobilgränssnitt i 0.9.4
 
 PI-status och start/stopp finns högst på översikten efter temperaturkorten. Beräkningsdetaljer, anslutningsstatus och den experimentella inomhusprognosen kan fällas ut. Inställningarnas rumsgivare väljs med sökbara kryssrutor.
 
