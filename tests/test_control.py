@@ -51,6 +51,14 @@ class ControlTests(unittest.TestCase):
         x.send(c,s,{'signal':4.5},clock=t+900)
         self.assertEqual(r.call_args.args[1]['value'],4.5)
 
+    def test_comfort_reconfiguration_keeps_active_control(self):
+        c,s,i,r,x=self.setup_control();x.arm(c,s,i)
+        updated=dict(c,target=21.7,comfort_max=22.5,target_climates=['climate.living'])
+        x.reconfigure_comfort(updated)
+        self.assertTrue(x.get()['active']);self.assertEqual(x.settings,updated)
+        x.send(updated,s,{'signal':5},clock=x.changed_at)
+        self.assertTrue(x.get()['active'])
+
     def test_collector_active_cycle(self):
         import tempfile
         from pathlib import Path

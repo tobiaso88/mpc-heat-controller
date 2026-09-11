@@ -9,7 +9,7 @@ Home Assistant-app för komfortvärme med eget webbgränssnitt, PI och experimen
 - Installationsguide med valbara givare, komfortmål, väderkälla och PI-parametrar.
 - Valfria climate-entiteter kan följa appens gemensamma börvärde; inget mål väljs eller skrivs utan uttrycklig konfiguration.
 - PI i skuggläge eller uttryckligen aktiverad skrivning till Ohmigos number-entitet.
-- Valbar automatisk återstart kräver tillgängliga, giltiga givarvärden som är högst 24 timmar gamla och två godkända kontroller. Manuellt stopp och sparade inställningar blockerar återstart tills du aktiverar igen.
+- Valbar automatisk återstart kräver tillgängliga, giltiga givarvärden som är högst 24 timmar gamla och två godkända kontroller. Manuellt stopp och tekniska inställningsändringar blockerar återstart tills du aktiverar igen; komfortmål kan ändras live.
 - Aktiv PI kräver verifierad kommandowatchdog och avstängd gammal automation. Läs [instruktionerna](mpc_heat_controller/DOCS.md) före överlämning.
 - Timprognos, mätloggning och sparad offlinejämförelse av husmodeller. Ingen aktiv MPC ännu.
 

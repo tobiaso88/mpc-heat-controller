@@ -132,6 +132,14 @@ class Control:
             self.settings=dict(c);self.armed=True;self.last_sent=value;self.changed_at=time.monotonic();self.pending_ack=None
             self.info={'active':True,'message':'Aktiverad. Väntar på första temperaturkommandot.'}
 
+    def reconfigure_comfort(self,c):
+        with self.lock:
+            if not self.armed and self.resume_settings is None:return
+            if self.armed:
+                self.settings=dict(c)
+                self.info=dict(self.info,message='Komfortmålet uppdaterades utan att stoppa PI.')
+            self.persist(dict(c) if c.get('auto_restart') else None)
+
     def verify_output(self,current,step,clock):
         tolerance=step/2+1e-6
         if abs(current-self.last_sent)<=tolerance:

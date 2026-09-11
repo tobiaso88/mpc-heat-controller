@@ -156,8 +156,14 @@ class Handler(BaseHTTPRequestHandler):
                 c = validate(json.loads(body))
                 if COLLECTOR:
                     with COLLECTOR.cycle_lock:
-                        COLLECTOR.control.stop('Inställningar sparade. PI måste aktiveras igen för verklig styrning.')
+                        previous=config()
+                        changed={key for key in c if c[key]!=previous[key]}
                         save(c)
+                        if changed.issubset({'target','comfort_min','comfort_max','target_climates'}):
+                            COLLECTOR.control.reconfigure_comfort(c)
+                            if changed-{'target_climates'}:COLLECTOR.pi.reset()
+                        else:
+                            COLLECTOR.control.stop('Inställningar sparade. PI måste aktiveras igen för verklig styrning.')
                 else:save(c)
                 if COLLECTOR: COLLECTOR.wake.set()
                 return self.reply(200, c)

@@ -2,6 +2,7 @@
 
 - Appens börvärde kan synkas enkelriktat till valfria `climate`-entiteter som användaren själv markerar. Inga termostater väljs eller ändras automatiskt.
 - Synkstatus visas i appen, via en egen HA-sensor och på dashboarden. Termostatfel varnar utan att stoppa PI:s separata Ohmigo-styrning.
+- Börvärde, komfortintervall och följartermostater kan ändras utan att aktiv PI stoppas. Ändrat komfortmål nollställer I-delen; tekniska reglerinställningar kräver fortsatt ny aktivering.
 
 # 0.10.0
 
