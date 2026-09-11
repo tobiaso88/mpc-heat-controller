@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 SENSORS = {
     'pi_status': ('PI-status', None),
+    'target_sync': ('Termostatsynkning', None),
     'mode': ('Grundläge', None),
     'target': ('Börvärde', 'temperature'),
     'indoor': ('Medeltemperatur', 'temperature'),
@@ -27,7 +28,7 @@ SENSORS = {
 }
 
 DEFAULT_ENTITY_IDS = {
-    'pi_status':'mpc_heat_controller_pi_status','mode':'mpc_heat_controller_grundlage',
+    'pi_status':'mpc_heat_controller_pi_status','target_sync':'mpc_heat_controller_termostatsynkning','mode':'mpc_heat_controller_grundlage',
     'target':'mpc_heat_controller_borvarde','indoor':'mpc_heat_controller_medeltemperatur',
     'outdoor':'mpc_heat_controller_verklig_utetemperatur','applied_signal':'mpc_heat_controller_ohmigo_installd_temperatur',
     'pump_outdoor':'mpc_heat_controller_varmepumpens_avlasta_utetemperatur','supply':'mpc_heat_controller_framledning',
@@ -47,16 +48,17 @@ def identity(data):
 def discovery(instance):
     topic=f'mpc_heat_controller/{instance}/state'
     device={'identifiers':[f'mpc_heat_controller_{instance}'],'name':'MPC Heat Controller',
-            'manufacturer':'mpc-heat-controller','model':'PI heat controller','sw_version':'0.10.0'}
+            'manufacturer':'mpc-heat-controller','model':'PI heat controller','sw_version':'0.11.0'}
     configs={}
     for key,(name,kind) in SENSORS.items():
+        attribute_message='value_json.target_sync_message' if key=='target_sync' else 'value_json.message'
         config={'name':name,'unique_id':f'mpc_{instance}_{key}','device':device,
                 'default_entity_id':'sensor.'+DEFAULT_ENTITY_IDS[key],
                 'state_topic':topic,'value_template':"{{ value_json."+key+" if value_json."+key+" is not none else '' }}",
                 'availability_topic':topic,'availability_template':"{{ 'online' if value_json."+key+" is not none else 'offline' }}",
                 'expire_after':180,
                 'json_attributes_topic':topic,
-                'json_attributes_template':"{{ {'updated_at': value_json.updated_at, 'message': value_json.message} | tojson }}"}
+                'json_attributes_template':"{{ {'updated_at': value_json.updated_at, 'message': "+attribute_message+"} | tojson }}"}
         if kind in ('temperature','delta'):
             config.update(unit_of_measurement='°C',state_class='measurement')
         if kind in ('temperature','timestamp'):config['device_class']=kind
@@ -67,7 +69,8 @@ def payload(c,snapshot,clock=None):
     clock=time.time() if clock is None else clock
     result={key:None for key in SENSORS}
     control=snapshot.get('control',{})
-    result.update(mode=c['mode'],target=c['target'],updated_at=datetime.fromtimestamp(clock,timezone.utc).isoformat(),message=control.get('message',''))
+    target_sync=snapshot.get('target_sync',{})
+    result.update(mode=c['mode'],target=c['target'],target_sync=target_sync.get('state'),target_sync_message=target_sync.get('message',''),updated_at=datetime.fromtimestamp(clock,timezone.utc).isoformat(),message=control.get('message',''))
     result['pi_status']='active' if control.get('active') else 'waiting' if control.get('auto_restart_pending') else 'error' if snapshot.get('error') or control.get('fault') else 'stopped'
     last=control.get('last_command')
     if last:

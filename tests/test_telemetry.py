@@ -3,11 +3,25 @@ import unittest
 import sqlite3
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from app.core import validate
-from app.telemetry import normalize_forecast, readings, Collector
+from app.telemetry import normalize_forecast, readings, sync_target_climates, Collector
 
 class TelemetryTests(unittest.TestCase):
+    def test_selected_climates_follow_app_target(self):
+        c=validate({'mode':'shadow','indoor':['sensor.in'],'outdoor':'sensor.out','target_climates':['climate.living','climate.kitchen']})
+        states=[{'entity_id':'climate.living','state':'heat','attributes':{'temperature':20}},
+                {'entity_id':'climate.kitchen','state':'heat','attributes':{'temperature':21.5}}]
+        call=Mock();result=sync_target_climates(c,states,call)
+        self.assertEqual(result['state'],'ok');call.assert_called_once_with('services/climate/set_temperature',{'entity_id':'climate.living','temperature':21.5})
+        self.assertNotIn('climate.hc1',[x.args[1]['entity_id'] for x in call.call_args_list])
+
+    def test_target_sync_is_opt_in_and_nonfatal(self):
+        c=validate({'mode':'shadow','indoor':['sensor.in'],'outdoor':'sensor.out','target_climates':['climate.missing']})
+        call=Mock(side_effect=OSError())
+        self.assertEqual(sync_target_climates(c,[],call)['state'],'warning');call.assert_not_called()
+        c['mode']='demo';self.assertEqual(sync_target_climates(c,[],call)['state'],'off')
+
     def test_forecast_units_and_order(self):
         t=datetime.now(timezone.utc)
         rows=[{'datetime':(t+timedelta(hours=h)).isoformat(),'temperature':50} for h in [2,0,1]]

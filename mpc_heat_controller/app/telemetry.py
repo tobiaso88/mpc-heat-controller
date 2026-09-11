@@ -53,6 +53,32 @@ def readings(c, states):
                        'roles': role, 'value': value, 'quality': quality, 'reported_at': stamp, 'timestamp_source': 'last_reported' if s.get('last_reported') else 'last_updated'})
     return result
 
+def sync_target_climates(c,states,call=None):
+    call=request if call is None else call
+    entities=c.get('target_climates',[])
+    if c['mode']!='shadow' or not entities:
+        return {'state':'off','message':'Ingen synkning av rumstermostater är aktiv.'}
+    by_id={s['entity_id']:s for s in states}
+    updated=[];problems=[]
+    for entity in entities:
+        state=by_id.get(entity,{})
+        try:
+            current=float(state['attributes']['temperature'])
+            if not math.isfinite(current) or state.get('state') in ('unknown','unavailable'):raise ValueError()
+        except (KeyError,TypeError,ValueError):
+            problems.append(entity+': börvärdet är inte tillgängligt')
+            continue
+        if abs(current-c['target'])<=0.01:continue
+        try:
+            call('services/climate/set_temperature',{'entity_id':entity,'temperature':c['target']})
+            updated.append(entity)
+        except Exception:
+            problems.append(entity+': kunde inte ställas in')
+    if problems:return {'state':'warning','message':'Termostatsynkning behöver åtgärd: '+'; '.join(problems)+'.'}
+    message=f'{len(entities)} rumstermostat(er) följer {c["target"]:g} °C.'
+    if updated:message+=' Uppdaterade: '+', '.join(updated)+'.'
+    return {'state':'ok','message':message}
+
 def normalize_forecast(response, entity, unit, clock=None):
     clock = clock or now()
     if unit not in ('°C', '°F'): raise ValueError('Väderentiteten saknar en stödd temperaturenhet.')
@@ -79,7 +105,7 @@ class Collector:
     def __init__(self, config, data):
         self.config, self.data = config, data
         self.lock = threading.Lock()
-        self.snapshot = {'readings': [], 'forecast': {'points': [], 'message': 'Väntar på första hämtningen.'}, 'sampled_at': None, 'error': None}
+        self.snapshot = {'readings': [], 'forecast': {'points': [], 'message': 'Väntar på första hämtningen.'}, 'target_sync':{'state':'off','message':'Väntar på första kontrollen.'}, 'sampled_at': None, 'error': None}
         self.weather_key, self.weather_time = None, None
         self.forecast = {'points': [], 'message': 'Ingen väderentitet vald.'}
         self.wake = threading.Event()
@@ -97,6 +123,7 @@ class Collector:
         try:
             states = request('states')
             items = readings(c, states)
+            target_sync=sync_target_climates(c,states)
             if self.control.resume(c,states,items):self.pi.reset()
             if self.control.get()['active']:
                 # A number state can remain unchanged for days; freshly read state is the initial setpoint, not a temperature sensor.
@@ -118,7 +145,7 @@ class Collector:
                 except Exception:
                     self.forecast = {'points': [], 'entity': entity, 'message': 'Kunde inte hämta aktuell timprognos. Kontrollera väderentiteten och stöd för timprognos.'}
             stamp = now().isoformat()
-            snapshot = {'readings': items, 'forecast': self.forecast, 'sampled_at': stamp, 'error': None, 'logging': c['mode'] == 'shadow'}
+            snapshot = {'readings': items, 'forecast': self.forecast, 'target_sync':target_sync, 'sampled_at': stamp, 'error': None, 'logging': c['mode'] == 'shadow'}
             snapshot['pi'] = self.pi.step(c, items)
             required=set(c['indoor']+[c['outdoor']]+list(filter(None,[c['supply'],c['return']])))
             valid={r['entity'] for r in items if r['quality']=='OK' and r['value'] is not None}
@@ -134,6 +161,7 @@ class Collector:
             self.control.pause('PI pausad vid databortfall eller loggningsfel. Watchdog ska återgå till riktig utegivare.')
             self.pi.reset()
             snapshot = {'readings': [], 'forecast': {'points': [], 'message': 'Väderprognosen är inte tillgänglig.'},
+                        'target_sync':{'state':'warning','message':'Termostatsynkning kan inte kontrolleras när HA-data saknas.'},
                         'sampled_at': None, 'error': 'Kunde inte läsa eller logga data. Kontrollera HA-anslutningen och ledigt lagringsutrymme.', 'logging': False}
         snapshot['config_used']=c
         with self.lock: self.snapshot = snapshot

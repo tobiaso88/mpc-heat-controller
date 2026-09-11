@@ -48,7 +48,7 @@ def ha_states():
     req = urllib.request.Request("http://supervisor/core/api/states", headers={"Authorization": "Bearer " + token})
     with urllib.request.urlopen(req, timeout=10) as response:
         states = json.load(response)
-    return {"connected": True, "entities": [s for s in states if s["entity_id"].startswith(("sensor.", "weather.", "number.", "automation."))]}
+    return {"connected": True, "entities": [s for s in states if s["entity_id"].startswith(("sensor.", "weather.", "number.", "automation.", "climate."))]}
 
 def status(c, source):
     if c["mode"] == "demo":

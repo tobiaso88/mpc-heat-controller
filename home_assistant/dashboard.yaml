@@ -35,6 +35,11 @@ views:
             icon: mdi:state-machine
             vertical: false
           - type: tile
+            entity: sensor.mpc_heat_controller_termostatsynkning
+            name: Termostatsynkning
+            icon: mdi:thermostat-cog
+            vertical: false
+          - type: tile
             entity: sensor.mpc_heat_controller_medeltemperatur
             name: Inomhus
             icon: mdi:home-thermometer-outline

@@ -14,7 +14,7 @@ class EntityTests(unittest.TestCase):
 
     def test_discovery_readonly_and_expiring(self):
         configs=discovery('test')
-        self.assertEqual(len(configs),16)
+        self.assertEqual(len(configs),17)
         for topic,c in configs.items():
             self.assertTrue(topic.startswith('homeassistant/sensor/mpc_test/'))
             self.assertEqual(c['default_entity_id'],'sensor.'+DEFAULT_ENTITY_IDS[topic.rsplit('/',2)[-2]])

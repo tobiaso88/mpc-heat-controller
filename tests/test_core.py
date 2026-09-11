@@ -15,6 +15,8 @@ class Tests(unittest.TestCase):
     def test_invalid_sensor_shapes(self):
         for value in ([["sensor.x"]], ["sensor.x", "sensor.x"], [None]):
             with self.assertRaises(ValueError): validate({"indoor": value})
+        self.assertEqual(validate({'target_climates':['climate.living']})['target_climates'],['climate.living'])
+        with self.assertRaises(ValueError):validate({'target_climates':['sensor.living']})
 
     def test_plan_limits(self):
         c=validate(DEFAULT); plan=simulate(c)

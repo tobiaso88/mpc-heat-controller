@@ -1,4 +1,4 @@
-# MPC Heat Controller 0.10.0
+# MPC Heat Controller 0.11.0
 
 ## Grundläge och aktiv PI
 
@@ -50,7 +50,13 @@ Regulatorn återställs och startar mjukt från tillgängligt Ohmigo-värde vid 
 
 Kräver HA:s MQTT-integration ansluten till broker och MQTT Discovery med standardprefixet homeassistant. Appen använder HA-tjänsten mqtt.publish via Supervisor; inga ytterligare MQTT-lösenord behövs i appen. Efter uppdatering hittar du enheten MPC Heat Controller under Inställningar → Enheter och tjänster → MQTT. HA bestämmer slutliga entity_id utifrån namn och eventuella namnkonflikter.
 
-Sexton sensorer skapas: PI-status, Grundläge, Börvärde, Medeltemperatur, verklig utetemperatur, Ohmigo inställd temperatur, värmepumpens avlästa utetemperatur, framledning, retur, PI föreslagen utetemperatur, Senast skickad utetemperatur, Senaste temperaturkommando, Temperaturfel, PI P-del, PI I-del och PI utetemperaturkompensation. Samtliga är endast avläsningsbara; ändra börvärdet i appen. Statusvärden är active, waiting, stopped och error. En förklarande message och updated_at finns som attribut.
+Sjutton sensorer skapas: PI-status, termostatsynkning, Grundläge, Börvärde, Medeltemperatur, verklig utetemperatur, Ohmigo inställd temperatur, värmepumpens avlästa utetemperatur, framledning, retur, PI föreslagen utetemperatur, Senast skickad utetemperatur, Senaste temperaturkommando, Temperaturfel, PI P-del, PI I-del och PI utetemperaturkompensation. Samtliga är endast avläsningsbara; ändra börvärdet i appen. Statusvärden för PI är active, waiting, stopped och error. Termostatsynkning visar off, ok eller warning. En förklarande message och updated_at finns som attribut.
+
+## Gemensamt börvärde för rumstermostater i 0.11.0
+
+Under Din komfort kan du välja noll eller flera `climate`-entiteter som ska följa appens börvärde. Inget väljs automatiskt. I skuggläge kontrollerar appen deras `temperature`-börvärde varje minut och använder `climate.set_temperature` när ett valt värde avviker. Synkningen fortsätter även om PI-styrningen är stoppad, eftersom valet är en separat uttrycklig behörighet. Demoläge skriver aldrig till termostater.
+
+Synkningen är enkelriktad: appens börvärde är master. En manuell ändring på en vald termostat skrivs därför tillbaka till appens värde vid nästa kontroll. Värmepumpens egen climate-entitet bör lämnas omarkerad om den ska fortsätta reglera självständigt. En otillgänglig termostat eller misslyckad skrivning visas som warning men stoppar inte PI:s separata Ohmigo-styrning.
 
 Publiceringen kör i egen tråd ungefär varje minut. Discovery-konfiguration behålls på brokern och återannonseras var femte minut. Tillstånd behålls inte på brokern. Utan nya MQTT-publiceringar blir sensorerna otillgängliga efter 180 sekunder. Beräkningsunderlag äldre än 420 sekunder, eller från en annan konfiguration, publiceras som otillgängligt. I skuggläge uppdateras mätdata fortfarande var femte minut.
 

@@ -1,3 +1,8 @@
+# 0.11.0
+
+- Appens börvärde kan synkas enkelriktat till valfria `climate`-entiteter som användaren själv markerar. Inga termostater väljs eller ändras automatiskt.
+- Synkstatus visas i appen, via en egen HA-sensor och på dashboarden. Termostatfel varnar utan att stoppa PI:s separata Ohmigo-styrning.
+
 # 0.10.0
 
 - Färdig Home Assistant-dashboard utan HACS-beroenden för driftstatus, temperaturer, styrsignal, historik och PI-detaljer.

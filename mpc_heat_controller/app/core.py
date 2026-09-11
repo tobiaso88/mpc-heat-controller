@@ -4,6 +4,7 @@ import math
 
 DEFAULT = {"mode": "demo", "target": 21.5, "comfort_min": 21.0, "comfort_max": 22.0,
            "indoor": [], "outdoor": "", "supply": "", "return": "", "observe": [],
+           "target_climates": [],
            "weather": "", "applied_signal": "", "pump_outdoor": "", "signal_min": -15.0, "signal_max": 30.0, "max_step": 1.0,
            "pi_kp": 2.0, "pi_ki": 0.1, "pi_limit": 10.0, "pi_rate": 2.0,
            "watchdog_verified": False, "watchdog_seconds": 0, "exclusive_writer_confirmed": False, "old_automation": "", "auto_restart": False}
@@ -30,11 +31,12 @@ def validate(raw):
         raise ValueError("Börvärdet måste ligga inom komfortintervallet 7–35 °C")
     if not -40 <= c["signal_min"] < c["signal_max"] <= 50 or not 0 < c["max_step"] <= 5:
         raise ValueError("Kontrollera signalgränser och maximal ändring")
-    for k in ("indoor", "observe"):
+    for k in ("indoor", "observe", "target_climates"):
         if not isinstance(c[k], list) or len(c[k]) > 50:
             raise ValueError("Ogiltigt givarval")
-        if any(not isinstance(x, str) or not x.startswith("sensor.") or len(x) > 255 for x in c[k]):
-            raise ValueError("Välj sensorer för rumstemperatur")
+        prefix="climate." if k=='target_climates' else "sensor."
+        if any(not isinstance(x, str) or not x.startswith(prefix) or len(x) > 255 for x in c[k]):
+            raise ValueError("Välj giltiga rumstermostater" if k=='target_climates' else "Välj sensorer för rumstemperatur")
         if len(set(c[k])) != len(c[k]):
             raise ValueError("Samma givare får bara väljas en gång")
     for k in ("outdoor", "supply", "return", "weather", "applied_signal", "pump_outdoor"):

@@ -4,8 +4,8 @@ Dashboarden i `dashboard.yaml` använder bara Home Assistants inbyggda kort. Den
 
 ## Lägg in dashboarden
 
-1. Uppdatera och starta MPC Heat Controller 0.10.0. Vänta någon minut så att MQTT-entiteterna har skapats.
-2. Kontrollera under **Inställningar → Enheter och tjänster → MQTT → MPC Heat Controller** att de sexton entiteterna finns.
+1. Uppdatera och starta MPC Heat Controller 0.11.0. Vänta någon minut så att MQTT-entiteterna har skapats.
+2. Kontrollera under **Inställningar → Enheter och tjänster → MQTT → MPC Heat Controller** att de sjutton entiteterna finns.
 3. Skapa en ny dashboard under **Inställningar → Dashboards → Lägg till dashboard**.
 4. Öppna dashboarden, välj redigering och därefter **Råkonfigurationsredigerare**.
 5. Ersätt innehållet med hela innehållet i `dashboard.yaml` och spara.
