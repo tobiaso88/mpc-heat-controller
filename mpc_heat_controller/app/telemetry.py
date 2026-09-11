@@ -50,7 +50,7 @@ def readings(c, states):
         except (ValueError, TypeError, KeyError, AttributeError):
             value = None
         result.append({'entity': entity, 'name': attrs.get('friendly_name', entity),
-                       'roles': role, 'value': value, 'quality': quality, 'reported_at': stamp})
+                       'roles': role, 'value': value, 'quality': quality, 'reported_at': stamp, 'timestamp_source': 'last_reported' if s.get('last_reported') else 'last_updated'})
     return result
 
 def normalize_forecast(response, entity, unit, clock=None):

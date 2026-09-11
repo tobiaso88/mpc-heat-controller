@@ -1,3 +1,8 @@
+# 0.9.3
+
+- Automatisk återstart visar exakt blockerande givare eller utgångsvillkor. Säkerhetskraven behålls.
+- Givartider visar UTC-offset, ålder och om HA endast lämnar senaste ändring i stället för senaste rapport.
+
 # 0.9.2
 
 - Klockslag i grafer och mätvärden använder Home Assistants tidszon, med Europe/Stockholm som reserv. Sommar- och vintertid hanteras automatiskt. Lagring sker fortsatt i UTC.

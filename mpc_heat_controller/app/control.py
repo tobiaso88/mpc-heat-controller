@@ -51,19 +51,30 @@ class Control:
                 required=set(c['indoor']+[c['outdoor']]+list(filter(None,[c['supply'],c['return']])))
                 by_id={r['entity']:r for r in items}
                 raw={s['entity_id']:s for s in states}
-                for entity in required:
-                    r=by_id[entity]
-                    stamp=datetime.fromisoformat(r['reported_at'].replace('Z','+00:00')).timestamp()
-                    if r['quality']!='OK' or r['value'] is None or not math.isfinite(r['value']) or stamp<self.recovery_since or raw[entity].get('attributes',{}).get('restored'):
-                        raise ValueError()
+                blockers=[]
+                for entity in sorted(required):
+                    r=by_id.get(entity,{})
+                    reason=None
+                    try:
+                        stamp=datetime.fromisoformat(r['reported_at'].replace('Z','+00:00'))
+                        if stamp.tzinfo is None:raise ValueError()
+                        if r['quality']!='OK' or r['value'] is None or not math.isfinite(r['value']):reason=r.get('quality','Ogiltigt värde')
+                        elif raw.get(entity,{}).get('attributes',{}).get('restored'):reason='Återställt värde'
+                        elif stamp.timestamp()<self.recovery_since:reason='Ingen ny rapport efter omstart eller avbrott'
+                    except (KeyError,ValueError,TypeError,AttributeError):reason='Saknar giltig rapporttid'
+                    if reason:blockers.append({'entity':entity,'reason':reason,'reported_at':r.get('reported_at')})
+                if blockers:
+                    self.ready_since=None
+                    self.info={'active':False,'message':'Väntar på givare: '+ '; '.join(b['entity']+': '+b['reason'] for b in blockers)+'. Inget skickas.', 'blockers':blockers}
+                    return False
                 if self.ready_since is None:self.ready_since=time.monotonic()
                 if time.monotonic()-self.ready_since<60:
                     self.info={'active':False,'message':'Givare och utgång tillgängliga. Väntar på ny kontroll efter minst 60 sekunder; inget skickas.'};return False
                 self.arm(c,states,items)
                 return True
-            except (ValueError,KeyError,TypeError,AttributeError):
+            except (ValueError,KeyError,TypeError,AttributeError) as e:
                 self.ready_since=None
-                self.info={'active':False,'message':'Väntar på nya giltiga givarrapporter, tillgänglig Ohmigo och avstängd gammal automation. Inget skickas.'}
+                self.info={'active':False,'message':'Återstart väntar: '+(str(e) if isinstance(e,ValueError) and str(e) else 'Ogiltiga uppgifter från HA')+'. Inget skickas.'}
                 return False
 
     def stop(self, message='Stoppad. Inga fler kommandon skickas; verifierad watchdog måste återgå till riktig utegivare.', fault=False):

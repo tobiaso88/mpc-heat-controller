@@ -46,3 +46,16 @@ class RestartTests(unittest.TestCase):
         c,s,i=self.setup_data();x=Control(Mock());x.arm(c,s,i);x.pause('offline')
         c=dict(c,target=21.8)
         self.assertFalse(x.resume(c,s,i));self.assertFalse(x.get()['auto_restart_pending'])
+
+    def test_restart_names_stale_sensor_and_output_blocker(self):
+        c,s,i=self.setup_data();req=Mock();x=Control(req)
+        x.arm(c,s,i);x.pause('offline')
+        i[0]['reported_at']=(datetime.now(timezone.utc)-timedelta(hours=1)).isoformat()
+        i[1]['reported_at']=(datetime.now(timezone.utc)+timedelta(seconds=1)).isoformat()
+        self.assertFalse(x.resume(c,s,i))
+        self.assertEqual(x.get()['blockers'][0]['entity'],'sensor.in')
+        self.assertIn('Ingen ny rapport',x.get()['message'])
+        s[1]['state']='on'
+        self.assertFalse(x.resume(c,s,i))
+        self.assertIn('gamla automationen',x.get()['message'])
+        req.assert_not_called()
