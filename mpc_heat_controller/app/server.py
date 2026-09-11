@@ -15,6 +15,7 @@ from .core import DEFAULT, validate, simulate
 from .telemetry import Collector, readings, request as ha_request
 from .model import evaluate
 from . import model_store
+from .trends import read as read_trends
 
 DATA = Path(os.environ.get("MPC_DATA", "./data"))
 STATIC = Path(__file__).parent / "static"
@@ -109,12 +110,13 @@ class Handler(BaseHTTPRequestHandler):
             path = self.path.split("?")[0]
             if path == "/api/config": return self.reply(200, config())
             if path == "/api/entities": return self.reply(200, ha_states())
+            if path == '/api/trends':return self.reply(200,read_trends(DATA.resolve()))
             if path == "/api/model/saved": return self.reply(200, model_store.load(DATA))
             if path == "/api/telemetry": return self.reply(200, COLLECTOR.get() if COLLECTOR else {})
             if path == "/api/status":
                 c = config()
                 return self.reply(200, status(c, ha_states() if c["mode"] == "shadow" else {"entities": []}))
-            files = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"), "/style.css": ("style.css", "text/css")}
+            files = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"), "/ui.js": ("ui.js", "text/javascript"), "/style.css": ("style.css", "text/css")}
             if path in files:
                 name, kind = files[path]; return self.reply(200, (STATIC / name).read_bytes(), kind)
             self.reply(404, {"error": "Sidan finns inte"})

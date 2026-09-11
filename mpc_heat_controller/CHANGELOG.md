@@ -1,3 +1,12 @@
+# 0.9.0
+
+- PI-status och start/stopp flyttade till översiktens början; tekniska detaljer och experimentell prognos kan fällas ut.
+- Sökbara kryssrutor för flera rumsgivare, tydligare stegindikering och större mobilkontroller.
+- Mobilanpassad navigering, tabeller som kort och dialoger som ryms på liten skärm.
+- Graf över kommande utetemperatur med tabell som alternativ.
+- Historiska grafer för inomhus/börvärde och verklig utetemperatur/Ohmigo-inställning/PI-förslag från de senaste 48 timmarnas befintliga logg.
+- Ingen ändring av PI-reglering eller aktiveringsvillkor.
+
 # 0.8.0
 
 - Temperaturkortet visar rumsgivarnas medelvärde oberoende av utegivarens status. Äldre numeriska värden märks som senast kända; saknade givare får en förklaring. PI:s krav på giltiga givare är oförändrade.
