@@ -108,6 +108,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             path = self.path.split("?")[0]
+            if path == "/api/timezone":
+                zone = 'Europe/Stockholm'
+                try:
+                    candidate = ha_request('config').get('time_zone')
+                    if isinstance(candidate, str) and candidate: zone = candidate
+                except Exception:
+                    pass
+                return self.reply(200, {'time_zone': zone})
             if path == "/api/config": return self.reply(200, config())
             if path == "/api/entities": return self.reply(200, ha_states())
             if path == '/api/trends':return self.reply(200,read_trends(DATA.resolve()))

@@ -1,4 +1,4 @@
-# MPC Heat Controller 0.9.1
+# MPC Heat Controller 0.9.2
 
 ## Grundläge och aktiv PI
 
@@ -58,7 +58,7 @@ Senast skickat värde är ett historiskt kommando till HA, inte kvittens från O
 
 Ett fel i publiceringen visas i webbgränssnittet och påverkar inte PI-loopen. Rapport om lyckad publicering betyder att HA accepterade MQTT-anropet, inte att appen kontrollerat entitetsregistret. Verifiera att enheten syns i HA efter första installationen.
 
-## Grafer och mobilgränssnitt i 0.9.1
+## Grafer och mobilgränssnitt i 0.9.2
 
 PI-status och start/stopp finns högst på översikten efter temperaturkorten. Beräkningsdetaljer, anslutningsstatus och den experimentella inomhusprognosen kan fällas ut. Inställningarnas rumsgivare väljs med sökbara kryssrutor.
 

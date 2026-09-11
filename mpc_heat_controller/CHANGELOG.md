@@ -1,3 +1,7 @@
+# 0.9.2
+
+- Klockslag i grafer och mätvärden använder Home Assistants tidszon, med Europe/Stockholm som reserv. Sommar- och vintertid hanteras automatiskt. Lagring sker fortsatt i UTC.
+
 # 0.9.1
 
 - Valbar givare för värmepumpens avlästa utetemperatur efter Ohmigo. Loggas och visas i historikgrafen tillsammans med inställt värde. Påverkar inte PI eller startvillkor.
