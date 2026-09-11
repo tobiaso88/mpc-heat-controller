@@ -1,3 +1,8 @@
+# 0.9.5
+
+- Avrundning till närmaste 0,5 °C. Sändning högst var femte minut, även vid oförändrat värde. PI och säkerhetskontroller fortsätter varje minut.
+- Watchdog-inställningen måste vara minst 600 sekunder för marginal till sändningsintervallet. Hastighetsbegränsningen behålls.
+
 # 0.9.4
 
 - Giltiga, tillgängliga givarvärden accepteras upp till 24 timmar. Automatisk återstart kräver inte en ny rapport efter omstart. Två stabila kontroller med minst 60 sekunders mellanrum och övriga startvillkor behålls.

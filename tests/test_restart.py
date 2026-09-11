@@ -8,7 +8,7 @@ from app.core import validate
 
 class RestartTests(unittest.TestCase):
     def setup_data(self):
-        c=validate(dict(mode='shadow',indoor=['sensor.in'],outdoor='sensor.out',applied_signal='number.hp',old_automation='automation.old',watchdog_verified=True,exclusive_writer_confirmed=True,watchdog_seconds=300,auto_restart=True))
+        c=validate(dict(mode='shadow',indoor=['sensor.in'],outdoor='sensor.out',applied_signal='number.hp',old_automation='automation.old',watchdog_verified=True,exclusive_writer_confirmed=True,watchdog_seconds=7200,auto_restart=True))
         states=[{'entity_id':'number.hp','state':'5','attributes':{'unit_of_measurement':'°C','min':-20,'max':40,'step':0.5}},{'entity_id':'automation.old','state':'off'}]
         items=[]
         for e in ['sensor.in','sensor.out']:

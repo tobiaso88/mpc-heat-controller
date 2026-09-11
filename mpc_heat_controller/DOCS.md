@@ -1,4 +1,4 @@
-# MPC Heat Controller 0.9.4
+# MPC Heat Controller 0.9.5
 
 ## Grundläge och aktiv PI
 
@@ -8,11 +8,11 @@ Appen börjar alltid utan skrivning. Om automatisk återstart är vald och PI ti
 
 1. Välj skuggläge, rumsgivare och verklig utegivare. Välj Ohmigos number-entitet som inställt värde. Giltiga min/max/step och °C krävs på entiteten.
 2. Ställ in PI och absoluta signalgränser. Startvärden Kp=2 och Ki=0,1 är exempel, inte injusterade parametrar.
-3. Verifiera på hårdvaran att uteblivna temperaturkommandon ger fallback till riktig utegivare och att upprepade oförändrade kommandon håller watchdog vid liv. Ange den verifierade timeouten i sekunder, minst 180. Programmet kan inte verifiera hårdvarans beteende åt dig.
+3. Verifiera på hårdvaran att uteblivna temperaturkommandon ger fallback till riktig utegivare och att upprepade oförändrade kommandon håller watchdog vid liv. Ange den verifierade timeouten i sekunder, minst 600. Programmet kan inte verifiera hårdvarans beteende åt dig.
 4. Stäng av gamla MQTT-automationen och alla andra skrivare. Välj automationen i guiden. Appen kontrollerar att den är avstängd inför varje skrivning; andra skrivare kan inte säkert upptäckas.
 5. Spara. På översikten väljer du Aktivera PI-styrning och bekräftar verklig skrivning. Att installera eller spara aktiverar aldrig PI.
 
-Aktiv PI skriver via number.set_value ungefär varje minut plus nätverks- och beräkningstid, även när temperaturen är oförändrad. Utgången följer entitetens steg samt appens absoluta gränser och ändringshastighet. Små ändringar ackumuleras tills ett helt steg ryms inom ändringsgränsen. HA:s lyckade servicesvar är inte kvittens från pumpen.
+Aktiv PI kontrollerar varje minut och skriver via number.set_value tidigast 300 sekunder efter föregående sändning, även när temperaturen är oförändrad. Nätverks- och beräkningstid kan förlänga intervallet. Utgången avrundas till närmaste 0,5 °C och följer appens absoluta gränser och ändringshastighet. Entiteten måste stödja halva grader. Vid ett startvärde utanför dessa steg kan första sändningen vänta tills hastighetsgränsen tillåter avrundningen. Små ändringar ackumuleras tills ett helt steg ryms inom ändringsgränsen. HA:s lyckade servicesvar är inte kvittens från pumpen.
 
 ## Stopp, fel och omstart
 
@@ -58,7 +58,7 @@ Senast skickat värde är ett historiskt kommando till HA, inte kvittens från O
 
 Ett fel i publiceringen visas i webbgränssnittet och påverkar inte PI-loopen. Rapport om lyckad publicering betyder att HA accepterade MQTT-anropet, inte att appen kontrollerat entitetsregistret. Verifiera att enheten syns i HA efter första installationen.
 
-## Grafer och mobilgränssnitt i 0.9.4
+## Grafer och mobilgränssnitt i 0.9.5
 
 PI-status och start/stopp finns högst på översikten efter temperaturkorten. Beräkningsdetaljer, anslutningsstatus och den experimentella inomhusprognosen kan fällas ut. Inställningarnas rumsgivare väljs med sökbara kryssrutor.
 

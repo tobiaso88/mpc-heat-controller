@@ -5,7 +5,7 @@ from app.core import validate
 
 class ControlTests(unittest.TestCase):
     def setup_control(self):
-        c=validate(dict(mode='shadow',indoor=['sensor.in'],outdoor='sensor.out',applied_signal='number.hp',old_automation='automation.old',watchdog_verified=True,exclusive_writer_confirmed=True,watchdog_seconds=300))
+        c=validate(dict(mode='shadow',indoor=['sensor.in'],outdoor='sensor.out',applied_signal='number.hp',old_automation='automation.old',watchdog_verified=True,exclusive_writer_confirmed=True,watchdog_seconds=7200))
         states=[{'entity_id':'number.hp','state':'5','attributes':{'unit_of_measurement':'°C','min':-20,'max':40,'step':0.5}}, {'entity_id':'automation.old','state':'off'}]
         items=[{'entity':e,'value':20,'quality':'OK'} for e in ['sensor.in','sensor.out']]
         request=Mock();control=Control(request)
@@ -15,7 +15,10 @@ class ControlTests(unittest.TestCase):
         c,s,i,r,x=self.setup_control()
         x.send(c,s,{'signal':5});r.assert_not_called()
         x.arm(c,s,i);r.assert_not_called()
-        x.send(c,s,{'signal':5});x.send(c,s,{'signal':5})
+        t=x.changed_at
+        x.send(c,s,{'signal':5},clock=t);x.send(c,s,{'signal':5},clock=t+299)
+        self.assertEqual(r.call_count,1)
+        x.send(c,s,{'signal':5},clock=t+300)
         self.assertEqual(r.call_count,2)
         r.assert_called_with('services/number/set_value',{'entity_id':'number.hp','value':5})
         x.stop();x.send(c,s,{'signal':5});self.assertEqual(r.call_count,2)
@@ -64,3 +67,34 @@ class ControlTests(unittest.TestCase):
             self.assertTrue(collector.get()['control']['active'])
             self.assertEqual(req.call_args.args[0],'services/number/set_value')
             self.assertEqual(req.call_args.args[1]['value'],5)
+
+    def test_half_degree_rounding_and_changed_value_waits_five_minutes(self):
+        c,s,i,r,x=self.setup_control();s[0]['attributes']['step']=0.1
+        x.arm(c,s,i);t=x.changed_at
+        x.send(c,s,{'signal':4.6},clock=t+900)
+        self.assertEqual(r.call_args.args[1]['value'],4.5)
+        s[0]['state']='4.5'
+        x.send(c,s,{'signal':4.1},clock=t+1199)
+        self.assertEqual(r.call_count,1)
+        x.send(c,s,{'signal':4.1},clock=t+1200)
+        self.assertEqual(r.call_count,2)
+        self.assertEqual(r.call_args.args[1]['value'],4.5)  # Rate limit still applies.
+        x.send(c,s,{'signal':4.1},clock=t+1800)
+        self.assertEqual(r.call_args.args[1]['value'],4.0)
+
+    def test_fault_checked_between_sends(self):
+        c,s,i,r,x=self.setup_control();x.arm(c,s,i);t=x.changed_at
+        x.send(c,s,{'signal':5},clock=t)
+        s[1]['state']='on'
+        x.send(c,s,{'signal':5},clock=t+60)
+        self.assertFalse(x.get()['active']);self.assertEqual(r.call_count,1)
+
+    def test_off_grid_handover_and_short_watchdog(self):
+        c,s,i,r,x=self.setup_control();c['watchdog_seconds']=300
+        with self.assertRaises(ValueError):x.arm(c,s,i)
+        c['watchdog_seconds']=7200;s[0]['attributes']['step']=0.1;s[0]['state']='5.1'
+        x.arm(c,s,i);t=x.changed_at
+        x.send(c,s,{'signal':5.1},clock=t)
+        r.assert_not_called()
+        x.send(c,s,{'signal':5.1},clock=t+300)
+        self.assertEqual(r.call_args.args[1]['value'],5)

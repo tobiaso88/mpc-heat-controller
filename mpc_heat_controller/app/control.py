@@ -15,6 +15,7 @@ class Control:
         self.last_sent=None
         self.changed_at=None
         self.last_command=None
+        self.last_dispatch=None
         self.data=data
         self.resume_settings=None
         self.ready_since=None
@@ -85,8 +86,8 @@ class Control:
     def target(self,c,states):
         by_id={s['entity_id']:s for s in states}
         if c['mode']!='shadow':raise ValueError('Välj skuggläge för att förbereda PI.')
-        if not c['watchdog_verified'] or c['watchdog_seconds']<180:
-            raise ValueError('Verifiera att uteblivna temperaturkommandon ger fallback och ange timeout, minst 180 sekunder.')
+        if not c['watchdog_verified'] or c['watchdog_seconds']<600:
+            raise ValueError('Verifiera att uteblivna temperaturkommandon ger fallback och ange timeout, minst 600 sekunder för sändning var femte minut.')
         if not c['exclusive_writer_confirmed']:raise ValueError('Bekräfta att alla andra skrivare är avstängda.')
         old=by_id.get(c['old_automation'],{})
         if old.get('state')!='off':raise ValueError('Den angivna gamla automationen måste finnas och vara avstängd.')
@@ -101,6 +102,10 @@ class Control:
             if a.get('unit_of_measurement')!='°C':raise ValueError()
             if not max(low,c['signal_min'])<=value<=min(high,c['signal_max']):raise ValueError()
         except (KeyError,ValueError,TypeError):raise ValueError('Utgången saknar giltigt värde, enhet eller gränser; kontrollera även appens signalgränser.')
+        if abs(0.5/step-round(0.5/step))>1e-6 or abs(low/step-round(low/step))>1e-6:
+            raise ValueError('Utgångens steg och gränser måste stödja temperaturer i steg om 0,5 °C.')
+        if math.ceil(max(low,c['signal_min'])*2)>math.floor(min(high,c['signal_max'])*2):
+            raise ValueError('Signalgränserna måste innehålla ett värde i steg om 0,5 °C.')
         return value,low,high,step
 
     def arm(self,c,states,items):
@@ -124,15 +129,20 @@ class Control:
                 proposed=pi.get('signal')
                 if proposed is None or not math.isfinite(proposed):raise ValueError('PI saknar giltigt förslag.')
                 clock=time.monotonic() if clock is None else clock
+                if self.last_dispatch is not None and clock-self.last_dispatch<300:return
                 lo=max(low,c['signal_min']);hi=min(high,c['signal_max'])
-                min_tick=math.ceil((lo-low)/step-1e-9);max_tick=math.floor((hi-low)/step+1e-9)
-                if min_tick>max_tick:raise ValueError('Inget tillåtet utgångsvärde inom gränserna.')
-                tick=max(min_tick,min(max_tick,round((proposed-low)/step)))
-                value=round(low+tick*step,6)
+                min_tick=math.ceil(lo*2-1e-9);max_tick=math.floor(hi*2+1e-9)
+                value=max(min_tick,min(max_tick,math.floor(proposed*2+0.5)))/2
                 if abs(value-self.last_sent)>c['pi_rate']*max(0,clock-self.changed_at)/3600+1e-6:
+                    # Initial HA value may be off the half-degree grid. Wait for enough
+                    # rate allowance rather than transmitting an unrounded value.
+                    if abs(self.last_sent*2-round(self.last_sent*2))>1e-6:
+                        self.info={'active':True,'message':'Väntar på tillåten ändring till närmaste 0,5 °C. Inget skickas ännu.'}
+                        return
                     value=self.last_sent
-                # Always send: this heartbeat depends on verified repeated-command semantics.
+                # Repeat unchanged values every five minutes for the watchdog.
                 self.request('services/number/set_value',{'entity_id':c['applied_signal'],'value':value})
+                self.last_dispatch=clock
                 if value!=self.last_sent:self.changed_at=clock
                 self.last_sent=value
                 self.last_command={'value':value,'sent_at':time.time()}
