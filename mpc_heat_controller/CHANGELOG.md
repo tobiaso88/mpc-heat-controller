@@ -1,3 +1,8 @@
+# 0.10.0
+
+- Färdig Home Assistant-dashboard utan HACS-beroenden för driftstatus, temperaturer, styrsignal, historik och PI-detaljer.
+- Egna HA-sensorer för verklig utetemperatur, Ohmigos inställda temperatur, pumpens avlästa utetemperatur, framledning och retur gör dashboarden oberoende av installationens råa entity-ID:n.
+
 # 0.9.7
 
 - Ett låst PI-fel skapar automatiskt en beständig Home Assistant-notis. Manuell avstängning och normala väntelägen ger ingen felnotis.

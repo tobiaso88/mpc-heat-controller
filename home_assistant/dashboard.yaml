@@ -1,0 +1,150 @@
+title: Värmestyrning
+views:
+  - title: Värme
+    path: varme
+    icon: mdi:home-thermometer
+    type: sections
+    max_columns: 4
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: Driftstatus
+            icon: mdi:shield-home
+          - type: markdown
+            content: >-
+              {% set status = states('sensor.mpc_heat_controller_pi_status') %}
+              {% if status == 'active' %}
+              ## ✅ PI-styrningen är aktiv
+              {{ state_attr('sensor.mpc_heat_controller_pi_status', 'message') or 'Temperaturkommandon skickas.' }}
+              {% elif status == 'waiting' %}
+              ## ⏳ PI väntar på återstart
+              {{ state_attr('sensor.mpc_heat_controller_pi_status', 'message') or 'Inga kommandon skickas just nu.' }}
+              {% elif status in ['unavailable', 'unknown'] %}
+              ## ⚠️ Appens status saknas
+              Kontrollera att MPC Heat Controller körs. Ohmigos watchdog ska under tiden använda riktig utegivare.
+              {% else %}
+              ## 🛑 PI-styrningen är avstängd
+              {{ state_attr('sensor.mpc_heat_controller_pi_status', 'message') or 'Öppna appen och kontrollera orsaken.' }}
+              {% endif %}
+            grid_options:
+              columns: full
+          - type: tile
+            entity: sensor.mpc_heat_controller_pi_status
+            name: PI-status
+            icon: mdi:state-machine
+            vertical: false
+          - type: tile
+            entity: sensor.mpc_heat_controller_medeltemperatur
+            name: Inomhus
+            icon: mdi:home-thermometer-outline
+            vertical: false
+          - type: tile
+            entity: sensor.mpc_heat_controller_borvarde
+            name: Komfortmål
+            icon: mdi:bullseye-arrow
+            vertical: false
+          - type: button
+            name: Öppna MPC Heat Controller
+            icon: mdi:cog-play-outline
+            show_state: false
+            tap_action:
+              action: navigate
+              navigation_path: /hassio/dashboard
+            hold_action:
+              action: none
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Temperaturer just nu
+            icon: mdi:thermometer-lines
+          - type: tile
+            entity: sensor.mpc_heat_controller_verklig_utetemperatur
+            name: Verklig utetemperatur
+            icon: mdi:thermometer
+          - type: tile
+            entity: sensor.mpc_heat_controller_ohmigo_installd_temperatur
+            name: Ohmigo inställt
+            icon: mdi:tune-vertical
+          - type: tile
+            entity: sensor.mpc_heat_controller_varmepumpens_avlasta_utetemperatur
+            name: Pumpens avlästa utetemperatur
+            icon: mdi:heat-pump-outline
+          - type: tile
+            entity: sensor.mpc_heat_controller_framledning
+            name: Framledning
+            icon: mdi:thermometer-chevron-up
+          - type: tile
+            entity: sensor.mpc_heat_controller_retur
+            name: Retur
+            icon: mdi:thermometer-chevron-down
+          - type: tile
+            entity: sensor.mpc_heat_controller_pi_foreslagen_utetemperatur
+            name: PI-förslag
+            icon: mdi:chart-bell-curve-cumulative
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Komfort senaste dygnet
+            icon: mdi:chart-line
+          - type: history-graph
+            title: Inomhustemperatur och mål
+            hours_to_show: 24
+            fit_y_data: true
+            entities:
+              - entity: sensor.mpc_heat_controller_medeltemperatur
+                name: Inomhus
+              - entity: sensor.mpc_heat_controller_borvarde
+                name: Mål
+            grid_options:
+              columns: full
+          - type: history-graph
+            title: Utetemperatur och styrning
+            hours_to_show: 24
+            fit_y_data: true
+            entities:
+              - entity: sensor.mpc_heat_controller_verklig_utetemperatur
+                name: Verklig ute
+              - entity: sensor.mpc_heat_controller_ohmigo_installd_temperatur
+                name: Ohmigo
+              - entity: sensor.mpc_heat_controller_pi_foreslagen_utetemperatur
+                name: PI-förslag
+              - entity: sensor.mpc_heat_controller_varmepumpens_avlasta_utetemperatur
+                name: Pumpen avläser
+            grid_options:
+              columns: full
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: PI och felsökning
+            icon: mdi:chart-box-outline
+          - type: entities
+            title: Regulator
+            show_header_toggle: false
+            entities:
+              - entity: sensor.mpc_heat_controller_temperaturfel
+                name: Temperaturfel
+              - entity: sensor.mpc_heat_controller_pi_p_del
+                name: P-del
+              - entity: sensor.mpc_heat_controller_pi_i_del
+                name: I-del
+              - entity: sensor.mpc_heat_controller_pi_utetemperaturkompensation
+                name: Kompensation
+              - entity: sensor.mpc_heat_controller_senast_skickad_utetemperatur
+                name: Senast skickat
+              - entity: sensor.mpc_heat_controller_senaste_temperaturkommando
+                name: Skickat vid
+                format: relative
+              - entity: sensor.mpc_heat_controller_grundlage
+                name: Grundläge
+          - type: markdown
+            content: >-
+              **Säkerhet:** Start och stopp görs i styrappen så att bekräftelserna inte kan kringgås.
+              Om status blir `error` skapar appen en beständig Home Assistant-notis. Om sensorerna
+              blir otillgängliga körs inte appens statuspublicering; den verifierade Ohmigo-watchdoggen
+              ska då återgå till riktig utegivare.
+            grid_options:
+              columns: full

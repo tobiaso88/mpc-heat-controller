@@ -1,4 +1,4 @@
-# MPC Heat Controller 0.9.7
+# MPC Heat Controller 0.10.0
 
 ## Grundläge och aktiv PI
 
@@ -50,7 +50,7 @@ Regulatorn återställs och startar mjukt från tillgängligt Ohmigo-värde vid 
 
 Kräver HA:s MQTT-integration ansluten till broker och MQTT Discovery med standardprefixet homeassistant. Appen använder HA-tjänsten mqtt.publish via Supervisor; inga ytterligare MQTT-lösenord behövs i appen. Efter uppdatering hittar du enheten MPC Heat Controller under Inställningar → Enheter och tjänster → MQTT. HA bestämmer slutliga entity_id utifrån namn och eventuella namnkonflikter.
 
-Elva sensorer skapas: PI-status, Grundläge, Börvärde, Medeltemperatur, PI föreslagen utetemperatur, Senast skickad utetemperatur, Senaste temperaturkommando, Temperaturfel, PI P-del, PI I-del och PI utetemperaturkompensation. Samtliga är endast avläsningsbara; ändra börvärdet i appen. Statusvärden är active, waiting, stopped och error. En förklarande message och updated_at finns som attribut.
+Sexton sensorer skapas: PI-status, Grundläge, Börvärde, Medeltemperatur, verklig utetemperatur, Ohmigo inställd temperatur, värmepumpens avlästa utetemperatur, framledning, retur, PI föreslagen utetemperatur, Senast skickad utetemperatur, Senaste temperaturkommando, Temperaturfel, PI P-del, PI I-del och PI utetemperaturkompensation. Samtliga är endast avläsningsbara; ändra börvärdet i appen. Statusvärden är active, waiting, stopped och error. En förklarande message och updated_at finns som attribut.
 
 Publiceringen kör i egen tråd ungefär varje minut. Discovery-konfiguration behålls på brokern och återannonseras var femte minut. Tillstånd behålls inte på brokern. Utan nya MQTT-publiceringar blir sensorerna otillgängliga efter 180 sekunder. Beräkningsunderlag äldre än 420 sekunder, eller från en annan konfiguration, publiceras som otillgängligt. I skuggläge uppdateras mätdata fortfarande var femte minut.
 

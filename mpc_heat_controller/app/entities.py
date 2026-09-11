@@ -12,6 +12,11 @@ SENSORS = {
     'mode': ('Grundläge', None),
     'target': ('Börvärde', 'temperature'),
     'indoor': ('Medeltemperatur', 'temperature'),
+    'outdoor': ('Verklig utetemperatur', 'temperature'),
+    'applied_signal': ('Ohmigo inställd temperatur', 'temperature'),
+    'pump_outdoor': ('Värmepumpens avlästa utetemperatur', 'temperature'),
+    'supply': ('Framledning', 'temperature'),
+    'return': ('Retur', 'temperature'),
     'proposal': ('PI föreslagen utetemperatur', 'temperature'),
     'last_sent': ('Senast skickad utetemperatur', 'temperature'),
     'last_sent_at': ('Senaste temperaturkommando', 'timestamp'),
@@ -19,6 +24,17 @@ SENSORS = {
     'p': ('PI P-del', 'delta'),
     'i': ('PI I-del', 'delta'),
     'compensation': ('PI utetemperaturkompensation', 'delta'),
+}
+
+DEFAULT_ENTITY_IDS = {
+    'pi_status':'mpc_heat_controller_pi_status','mode':'mpc_heat_controller_grundlage',
+    'target':'mpc_heat_controller_borvarde','indoor':'mpc_heat_controller_medeltemperatur',
+    'outdoor':'mpc_heat_controller_verklig_utetemperatur','applied_signal':'mpc_heat_controller_ohmigo_installd_temperatur',
+    'pump_outdoor':'mpc_heat_controller_varmepumpens_avlasta_utetemperatur','supply':'mpc_heat_controller_framledning',
+    'return':'mpc_heat_controller_retur','proposal':'mpc_heat_controller_pi_foreslagen_utetemperatur',
+    'last_sent':'mpc_heat_controller_senast_skickad_utetemperatur','last_sent_at':'mpc_heat_controller_senaste_temperaturkommando',
+    'error':'mpc_heat_controller_temperaturfel','p':'mpc_heat_controller_pi_p_del','i':'mpc_heat_controller_pi_i_del',
+    'compensation':'mpc_heat_controller_pi_utetemperaturkompensation',
 }
 
 def identity(data):
@@ -31,10 +47,11 @@ def identity(data):
 def discovery(instance):
     topic=f'mpc_heat_controller/{instance}/state'
     device={'identifiers':[f'mpc_heat_controller_{instance}'],'name':'MPC Heat Controller',
-            'manufacturer':'mpc-heat-controller','model':'PI heat controller','sw_version':'0.9.7'}
+            'manufacturer':'mpc-heat-controller','model':'PI heat controller','sw_version':'0.10.0'}
     configs={}
     for key,(name,kind) in SENSORS.items():
         config={'name':name,'unique_id':f'mpc_{instance}_{key}','device':device,
+                'default_entity_id':'sensor.'+DEFAULT_ENTITY_IDS[key],
                 'state_topic':topic,'value_template':"{{ value_json."+key+" if value_json."+key+" is not none else '' }}",
                 'availability_topic':topic,'availability_template':"{{ 'online' if value_json."+key+" is not none else 'offline' }}",
                 'expire_after':180,
@@ -66,6 +83,9 @@ def payload(c,snapshot,clock=None):
     if fresh:
         valid={r['entity']:r['value'] for r in snapshot.get('readings',[]) if r['quality']=='OK' and isinstance(r['value'],(int,float)) and math.isfinite(r['value'])}
         if c['indoor'] and all(e in valid for e in c['indoor']):result['indoor']=sum(valid[e] for e in c['indoor'])/len(c['indoor'])
+        for dest,source in [('outdoor',c.get('outdoor')),('applied_signal',c.get('applied_signal')),
+                            ('pump_outdoor',c.get('pump_outdoor')),('supply',c.get('supply')),('return',c.get('return'))]:
+            if source in valid:result[dest]=valid[source]
         pi=snapshot.get('pi',{})
         if c['mode']=='shadow' and pi.get('signal') is not None:
             for dest,src in [('proposal','signal'),('error','error'),('p','p'),('i','i'),('compensation','compensation')]:result[dest]=pi.get(src)
