@@ -54,8 +54,15 @@ def status(c, source):
         return {"mode": "demo", "message": "Simulerat hus och simulerat väder. Modellen är inte kalibrerad.", "temperature": 21.1, "plan": simulate(c)}
     items = readings(c, source['entities'])
     indoor = [r for r in items if 'Reglering' in r['roles']]
+    indoor_errors=[r for r in indoor if r['quality']!='OK']
+    numeric=bool(indoor) and all(r['value'] is not None and math.isfinite(r['value']) for r in indoor)
+    temperature_message='Valda rumsgivares medelvärde'
+    if not indoor:temperature_message='Välj rumsgivare i installationsguiden.'
+    elif indoor_errors:
+        temperature_message=('Senast kända medelvärde. ' if numeric else 'Kan inte beräkna medelvärde. ')+', '.join(r['name']+': '+r['quality'] for r in indoor_errors)
     errors = [r['entity'] for r in items if r['quality'] != 'OK' and ('Reglering' in r['roles'] or 'Utomhus' in r['roles'])]
-    return {'mode': 'shadow', 'temperature': round(sum(r['value'] for r in indoor)/len(indoor),2) if indoor and not errors else None,
+    return {'mode': 'shadow', 'temperature': round(sum(r['value'] for r in indoor)/len(indoor),2) if numeric else None,
+            'temperature_valid':numeric and not indoor_errors,'temperature_message':temperature_message,
             'plan': [], 'message': 'Saknade eller gamla mätvärden: '+', '.join(errors) if errors else 'Mätning fungerar. Inomhusprognos och styrförslag väntar på validerad husmodell. Väder visas separat nedan.'}
 
 def inspect_csv(content):

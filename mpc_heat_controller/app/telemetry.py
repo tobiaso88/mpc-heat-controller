@@ -7,6 +7,7 @@ import threading
 import urllib.request
 from .pi import PI
 from .control import Control
+from .entities import EntityPublisher
 from datetime import datetime, timezone, timedelta
 
 def now():
@@ -84,6 +85,7 @@ class Collector:
         self.pi = PI()
         self.control = Control(request, data)
         self.cycle_lock = threading.RLock()
+        self.publisher=EntityPublisher(request,config,self.get,data)
 
     def cycle(self):
         with self.cycle_lock:
@@ -132,6 +134,7 @@ class Collector:
             self.pi.reset()
             snapshot = {'readings': [], 'forecast': {'points': [], 'message': 'Väderprognosen är inte tillgänglig.'},
                         'sampled_at': None, 'error': 'Kunde inte läsa eller logga data. Kontrollera HA-anslutningen och ledigt lagringsutrymme.', 'logging': False}
+        snapshot['config_used']=c
         with self.lock: self.snapshot = snapshot
 
     def store(self, stamp, items, c, pi=None):
@@ -147,6 +150,7 @@ class Collector:
     def get(self):
         with self.lock: result=json.loads(json.dumps(self.snapshot))
         result['control']=self.control.get()
+        result['entities']=self.publisher.get()
         return result
 
     def run(self):
@@ -157,4 +161,5 @@ class Collector:
             self.wake.wait(60 if state['active'] or state['auto_restart_pending'] else 300)
 
     def start(self):
+        self.publisher.start()
         threading.Thread(target=self.run, daemon=True).start()

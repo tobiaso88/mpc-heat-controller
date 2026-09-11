@@ -14,6 +14,7 @@ class Control:
         self.settings=None
         self.last_sent=None
         self.changed_at=None
+        self.last_command=None
         self.data=data
         self.resume_settings=None
         self.ready_since=None
@@ -38,7 +39,7 @@ class Control:
         with self.lock:
             if self.armed:self.recovery_since=time.time()
             self.armed=False;self.ready_since=None
-            self.info={'active':False,'message':message+' Inga kommandon skickas. Väntar på nya giltiga mätvärden.'}
+            self.info={'active':False,'fault':True,'message':message+' Inga kommandon skickas. Väntar på nya giltiga mätvärden.'}
 
     def resume(self,c,states,items):
         with self.lock:
@@ -65,12 +66,12 @@ class Control:
                 self.info={'active':False,'message':'Väntar på nya giltiga givarrapporter, tillgänglig Ohmigo och avstängd gammal automation. Inget skickas.'}
                 return False
 
-    def stop(self, message='Stoppad. Inga fler kommandon skickas; verifierad watchdog måste återgå till riktig utegivare.'):
+    def stop(self, message='Stoppad. Inga fler kommandon skickas; verifierad watchdog måste återgå till riktig utegivare.', fault=False):
         with self.lock:
             self.armed=False
             self.persist(None)
             self.ready_since=None
-            self.info={'active':False,'message':message}
+            self.info={'active':False,'fault':fault,'message':message}
 
     def target(self,c,states):
         by_id={s['entity_id']:s for s in states}
@@ -125,12 +126,13 @@ class Control:
                 self.request('services/number/set_value',{'entity_id':c['applied_signal'],'value':value})
                 if value!=self.last_sent:self.changed_at=clock
                 self.last_sent=value
+                self.last_command={'value':value,'sent_at':time.time()}
                 self.info={'active':True,'value':value,'sent_at':time.time(),
                            'message':'Temperaturkommando skickat via HA. Detta är inte kvittens från värmepumpen.'}
             except Exception as e:
                 message='PI stoppad: '+(str(e) if isinstance(e,ValueError) else 'Skrivning till Home Assistant misslyckades.')
-                if isinstance(e,ValueError):self.stop(message)
+                if isinstance(e,ValueError):self.stop(message,fault=True)
                 else:self.pause(message)
 
     def get(self):
-        with self.lock:return dict(self.info, auto_restart_pending=self.resume_settings is not None and not self.armed)
+        with self.lock:return dict(self.info, auto_restart_pending=self.resume_settings is not None and not self.armed,last_command=self.last_command)

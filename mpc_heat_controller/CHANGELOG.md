@@ -1,3 +1,12 @@
+# 0.8.0
+
+- Temperaturkortet visar rumsgivarnas medelvärde oberoende av utegivarens status. Äldre numeriska värden märks som senast kända; saknade givare får en förklaring. PI:s krav på giltiga givare är oförändrade.
+
+- Skapar elva avläsningsbara sensorer via HA:s MQTT Discovery: PI-status, grundläge, börvärde, medeltemperatur, PI-förslag, senast skickad temperatur/tid, temperaturfel, P, I och kompensation.
+- Publiceringen körs i separat tråd och blockerar inte temperaturkommandon.
+- Stabil enhetsidentitet mellan omstarter. Discovery återannonseras och sensorer får tillgänglighetskontroll och timeout.
+- MQTT-publiceringsstatus visas i webbgränssnittet. Saknade mätvärden publiceras inte som noll eller demovärden.
+
 # 0.7.0
 
 - Valbar automatisk återstart av tidigare aktiverad PI efter appomstart eller tillfälligt kommunikations-/givaravbrott.

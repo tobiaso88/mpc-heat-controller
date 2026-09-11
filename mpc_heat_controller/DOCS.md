@@ -1,4 +1,4 @@
-# MPC Heat Controller 0.7.0
+# MPC Heat Controller 0.8.0
 
 ## Grundläge och aktiv PI
 
@@ -34,7 +34,7 @@ Väderprognos hämtas var 30:e minut från vald HA-entitet med hourly via weathe
 
 Historikvyn kan granska CSV och jämföra enkel modell med fördröjningsmodell. Senaste lyckade CSV, givarval och resultat sparas i /data/model.sqlite. Alla modeller och horisonter använder gemensamma 24-timmarsfönster med sex timmars förhistorik. Träning använder första 70 procenten av kompletta timmar; senare data används för validering. Timmedel är aritmetiska, luckor fylls inte. Fördröjningsmodellen har fast ridge=0,01.
 
-Historiska framtida väder- och styrvärden används i offlineutvärderingen, inte historiska väderprognoser eller alternativa MPC-kommandon. Ingen MPC-modell aktiveras automatiskt. Egna HA-entiteter återstår.
+Historiska framtida väder- och styrvärden används i offlineutvärderingen, inte historiska väderprognoser eller alternativa MPC-kommandon. Ingen MPC-modell aktiveras automatiskt. Egna HA-entiteter finns via MQTT Discovery enligt nedan.
 
 ## Automatisk återstart i 0.7.0
 
@@ -45,3 +45,15 @@ Efter omstart eller tillfälligt avbrott krävs nya rapporter från alla reglerg
 Tillfälliga givar-, kommunikations- och loggningsfel pausar och kan återupptas. Oväntad utgångsändring och konfigurationskonflikt vid skrivning kräver manuell aktivering. Manuellt stopp och sparade inställningar raderar återstartsönskemålet, även över omstart. Stoppa därför appen via PI-stoppknappen om du vill att den ska förbli avstängd efter en senare appstart.
 
 Regulatorn återställs och startar mjukt från tillgängligt Ohmigo-värde vid återstart. Inga gamla beräknade kommandon spelas upp.
+
+## Egna HA-entiteter i 0.8.0
+
+Kräver HA:s MQTT-integration ansluten till broker och MQTT Discovery med standardprefixet homeassistant. Appen använder HA-tjänsten mqtt.publish via Supervisor; inga ytterligare MQTT-lösenord behövs i appen. Efter uppdatering hittar du enheten MPC Heat Controller under Inställningar → Enheter och tjänster → MQTT. HA bestämmer slutliga entity_id utifrån namn och eventuella namnkonflikter.
+
+Elva sensorer skapas: PI-status, Grundläge, Börvärde, Medeltemperatur, PI föreslagen utetemperatur, Senast skickad utetemperatur, Senaste temperaturkommando, Temperaturfel, PI P-del, PI I-del och PI utetemperaturkompensation. Samtliga är endast avläsningsbara; ändra börvärdet i appen. Statusvärden är active, waiting, stopped och error. En förklarande message och updated_at finns som attribut.
+
+Publiceringen kör i egen tråd ungefär varje minut. Discovery-konfiguration behålls på brokern och återannonseras var femte minut. Tillstånd behålls inte på brokern. Utan nya MQTT-publiceringar blir sensorerna otillgängliga efter 180 sekunder. Beräkningsunderlag äldre än 420 sekunder, eller från en annan konfiguration, publiceras som otillgängligt. I skuggläge uppdateras mätdata fortfarande var femte minut.
+
+Senast skickat värde är ett historiskt kommando till HA, inte kvittens från Ohmigo eller pumpen. Det behålls vid stopp inom samma appkörning men är otillgängligt efter omstart tills nästa kommando skickats. PI-demovärden publiceras inte. Enhetsidentiteten sparas i /data/entities.sqlite; radera inte filen om du vill behålla samma entiteter.
+
+Ett fel i publiceringen visas i webbgränssnittet och påverkar inte PI-loopen. Rapport om lyckad publicering betyder att HA accepterade MQTT-anropet, inte att appen kontrollerat entitetsregistret. Verifiera att enheten syns i HA efter första installationen.
