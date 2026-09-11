@@ -7,6 +7,8 @@ import sqlite3
 from datetime import datetime, timezone
 
 class Control:
+    ACK_GRACE_SECONDS=120
+
     def __init__(self, request, data=None):
         self.request=request
         self.lock=threading.RLock()
@@ -16,6 +18,7 @@ class Control:
         self.changed_at=None
         self.last_command=None
         self.last_dispatch=None
+        self.pending_ack=None
         self.data=data
         self.resume_settings=None
         self.ready_since=None
@@ -116,8 +119,19 @@ class Control:
             if not c['indoor'] or not required.issubset(valid):raise ValueError('Aktuella inne- och utetemperaturer krävs.')
             if self.armed:raise ValueError('PI är redan aktiv.')
             self.persist(dict(c) if c.get('auto_restart') else None)
-            self.settings=dict(c);self.armed=True;self.last_sent=value;self.changed_at=time.monotonic()
+            self.settings=dict(c);self.armed=True;self.last_sent=value;self.changed_at=time.monotonic();self.pending_ack=None
             self.info={'active':True,'message':'Aktiverad. Väntar på första temperaturkommandot.'}
+
+    def verify_output(self,current,step,clock):
+        tolerance=step/2+1e-6
+        if abs(current-self.last_sent)<=tolerance:
+            self.pending_ack=None
+            return
+        pending=self.pending_ack
+        if pending and abs(current-pending['previous'])<=tolerance:
+            if clock-pending['sent_at']<=self.ACK_GRACE_SECONDS:return
+            raise ValueError(f'Senaste kommandot {self.last_sent:g} °C har inte bekräftats av HA; utgången visar fortfarande {current:g} °C.')
+        raise ValueError(f'Utgången ändrades oväntat från {self.last_sent:g} till {current:g} °C. Kontrollera andra skrivare.')
 
     def send(self,c,states,pi,clock=None):
         with self.lock:
@@ -125,10 +139,10 @@ class Control:
             try:
                 if c!=self.settings:raise ValueError('Inställningarna ändrades. Aktivera på nytt efter granskning.')
                 current,low,high,step=self.target(c,states)
-                if abs(current-self.last_sent)>step/2+1e-6:raise ValueError('Utgången ändrades oväntat. Kontrollera andra skrivare.')
                 proposed=pi.get('signal')
                 if proposed is None or not math.isfinite(proposed):raise ValueError('PI saknar giltigt förslag.')
                 clock=time.monotonic() if clock is None else clock
+                self.verify_output(current,step,clock)
                 if self.last_dispatch is not None and clock-self.last_dispatch<300:return
                 lo=max(low,c['signal_min']);hi=min(high,c['signal_max'])
                 min_tick=math.ceil(lo*2-1e-9);max_tick=math.floor(hi*2+1e-9)
@@ -141,10 +155,12 @@ class Control:
                         return
                     value=self.last_sent
                 # Repeat unchanged values every five minutes for the watchdog.
+                previous=self.last_sent
                 self.request('services/number/set_value',{'entity_id':c['applied_signal'],'value':value})
                 self.last_dispatch=clock
                 if value!=self.last_sent:self.changed_at=clock
                 self.last_sent=value
+                self.pending_ack={'previous':previous,'sent_at':clock} if value!=previous else None
                 self.last_command={'value':value,'sent_at':time.time()}
                 self.info={'active':True,'value':value,'sent_at':time.time(),
                            'message':'Temperaturkommando skickat via HA. Detta är inte kvittens från värmepumpen.'}

@@ -1,3 +1,8 @@
+# 0.9.6
+
+- HA-entiteten får en kort, begränsad kvittensfrist efter ett ändrat kommando så att föregående tillstånd inte felaktigt tolkas som en annan skrivare. Ett avvikande tredje värde stoppar fortfarande PI direkt.
+- Feltexten visar förväntat och avläst utgångsvärde och skiljer utebliven HA-kvittens från en oväntad ändring.
+
 # 0.9.5
 
 - Avrundning till närmaste 0,5 °C. Sändning högst var femte minut, även vid oförändrat värde. PI och säkerhetskontroller fortsätter varje minut.

@@ -1,4 +1,4 @@
-# MPC Heat Controller 0.9.5
+# MPC Heat Controller 0.9.6
 
 ## Grundläge och aktiv PI
 
@@ -12,7 +12,7 @@ Appen börjar alltid utan skrivning. Om automatisk återstart är vald och PI ti
 4. Stäng av gamla MQTT-automationen och alla andra skrivare. Välj automationen i guiden. Appen kontrollerar att den är avstängd inför varje skrivning; andra skrivare kan inte säkert upptäckas.
 5. Spara. På översikten väljer du Aktivera PI-styrning och bekräftar verklig skrivning. Att installera eller spara aktiverar aldrig PI.
 
-Aktiv PI kontrollerar varje minut och skriver via number.set_value tidigast 300 sekunder efter föregående sändning, även när temperaturen är oförändrad. Nätverks- och beräkningstid kan förlänga intervallet. Utgången avrundas till närmaste 0,5 °C och följer appens absoluta gränser och ändringshastighet. Entiteten måste stödja halva grader. Vid ett startvärde utanför dessa steg kan första sändningen vänta tills hastighetsgränsen tillåter avrundningen. Små ändringar ackumuleras tills ett helt steg ryms inom ändringsgränsen. HA:s lyckade servicesvar är inte kvittens från pumpen.
+Aktiv PI kontrollerar varje minut och skriver via number.set_value tidigast 300 sekunder efter föregående sändning, även när temperaturen är oförändrad. Nätverks- och beräkningstid kan förlänga intervallet. Efter ett ändrat kommando får HA-entitetens tillstånd upp till 120 sekunder på sig att återspegla det nya värdet; ett annat värde stoppar fortfarande PI direkt. Utgången avrundas till närmaste 0,5 °C och följer appens absoluta gränser och ändringshastighet. Entiteten måste stödja halva grader. Vid ett startvärde utanför dessa steg kan första sändningen vänta tills hastighetsgränsen tillåter avrundningen. Små ändringar ackumuleras tills ett helt steg ryms inom ändringsgränsen. HA:s lyckade servicesvar och entitetstillstånd är inte kvittens från pumpen.
 
 ## Stopp, fel och omstart
 

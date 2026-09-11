@@ -89,6 +89,32 @@ class ControlTests(unittest.TestCase):
         x.send(c,s,{'signal':5},clock=t+60)
         self.assertFalse(x.get()['active']);self.assertEqual(r.call_count,1)
 
+    def test_delayed_ha_state_after_changed_command_gets_short_grace(self):
+        c,s,i,r,x=self.setup_control();t=1000
+        x.arm(c,s,i);x.changed_at=t-900
+        x.send(c,s,{'signal':4.5},clock=t)
+        self.assertEqual(r.call_args.args[1]['value'],4.5)
+        x.send(c,s,{'signal':4.5},clock=t+60)
+        self.assertTrue(x.get()['active'])
+        s[0]['state']='4.5'
+        x.send(c,s,{'signal':4.5},clock=t+120)
+        self.assertTrue(x.get()['active'])
+
+    def test_missing_ack_and_different_external_value_stop(self):
+        c,s,i,r,x=self.setup_control();t=1000
+        x.arm(c,s,i);x.changed_at=t-900
+        x.send(c,s,{'signal':4.5},clock=t)
+        x.send(c,s,{'signal':4.5},clock=t+121)
+        self.assertFalse(x.get()['active'])
+        self.assertIn('inte bekräftats',x.get()['message'])
+
+        c,s,i,r,x=self.setup_control();x.arm(c,s,i);x.changed_at=t-900
+        x.send(c,s,{'signal':4.5},clock=t)
+        s[0]['state']='6'
+        x.send(c,s,{'signal':4.5},clock=t+60)
+        self.assertFalse(x.get()['active'])
+        self.assertIn('från 4.5 till 6',x.get()['message'])
+
     def test_off_grid_handover_and_short_watchdog(self):
         c,s,i,r,x=self.setup_control();c['watchdog_seconds']=300
         with self.assertRaises(ValueError):x.arm(c,s,i)

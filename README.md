@@ -2,7 +2,7 @@
 
 Home Assistant-app för komfortvärme med eget webbgränssnitt, PI och experimentell modellutvärdering. Mål: HA OS 2026.9.1, Raspberry Pi 4 aarch64, 8 GB.
 
-## Version 0.9.5
+## Version 0.9.6
 
 - Mobilanpassat gränssnitt med vädergraf och historiska temperatur-/reglergrafer.
 - Elva egna avläsningsbara HA-sensorer via MQTT Discovery, med driftstatus och PI-värden.
