@@ -28,6 +28,7 @@ def readings(c, states):
     roles = {}
     for role, ids in [('Reglering', c['indoor']), ('Uppföljning', c['observe']),
                       ('Utomhus', [c['outdoor']]), ('Framledning', [c['supply']]), ('Retur', [c['return']]),
+                      ('Värmepumpens avlästa utetemperatur', [c.get('pump_outdoor', '')]),
                       ('Ohmigo inställt värde', [c.get('applied_signal', '')])]:
         for entity in filter(None, ids):
             roles.setdefault(entity, []).append(role)

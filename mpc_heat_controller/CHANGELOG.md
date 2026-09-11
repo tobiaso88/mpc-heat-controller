@@ -1,3 +1,7 @@
+# 0.9.1
+
+- Valbar givare för värmepumpens avlästa utetemperatur efter Ohmigo. Loggas och visas i historikgrafen tillsammans med inställt värde. Påverkar inte PI eller startvillkor.
+
 # 0.9.0
 
 - PI-status och start/stopp flyttade till översiktens början; tekniska detaljer och experimentell prognos kan fällas ut.

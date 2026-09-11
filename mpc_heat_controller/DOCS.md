@@ -1,4 +1,4 @@
-# MPC Heat Controller 0.9.0
+# MPC Heat Controller 0.9.1
 
 ## Grundläge och aktiv PI
 
@@ -58,10 +58,12 @@ Senast skickat värde är ett historiskt kommando till HA, inte kvittens från O
 
 Ett fel i publiceringen visas i webbgränssnittet och påverkar inte PI-loopen. Rapport om lyckad publicering betyder att HA accepterade MQTT-anropet, inte att appen kontrollerat entitetsregistret. Verifiera att enheten syns i HA efter första installationen.
 
-## Grafer och mobilgränssnitt i 0.9.0
+## Grafer och mobilgränssnitt i 0.9.1
 
 PI-status och start/stopp finns högst på översikten efter temperaturkorten. Beräkningsdetaljer, anslutningsstatus och den experimentella inomhusprognosen kan fällas ut. Inställningarnas rumsgivare väljs med sökbara kryssrutor.
 
 Vädergrafen visar prognostemperaturer för kommande 24 timmar. Timtabellen finns kvar under Visa timprognos. Historiska grafer hämtar de senaste 48 timmarna ur appens mätlogg: inomhusmedel och börvärde i en graf, utegivare, Ohmigos inställda värde och PI-förslag i en annan. Sista loggade värdet i varje tiominutersintervall visas. Luckor över 20 minuter, ogiltiga värden och ändrade givarval bryter linjerna. Ett ensamt värde visas som en punkt. Loggning måste vara igång för historiska grafer; importerad modell-CSV används inte där.
 
 På mobil kan grafer rullas i sidled för läsbara tidsaxlar. Tabeller visas som märkta kort. Ohmigos inställda värde är fortfarande inte en kvittens från värmepumpen.
+
+Välj vid behov **Värmepumpens avlästa utetemperatur (valfri)** i Inställningar. Det är pumpens uppfattade temperatur efter Ohmigo, inte verklig utetemperatur. Givaren används endast för uppföljning och loggning; bortfall stoppar inte PI. Historik för givaren samlas från att den valts.
