@@ -1,3 +1,9 @@
+# 0.12.0
+
+- Tränar och validerar automatiskt en husmodell från appens egen 90-dagars mätlogg när minst 250 kompletta timmar finns.
+- Visar ett 24-timmars MPC-förslag och en inomhusprognos i skuggläge utan att skicka MPC-kommandot till värmepumpen.
+- Behåller manuell CSV-import som separat verktyg för äldre historik.
+
 # 0.11.0
 
 - Appens börvärde kan synkas enkelriktat till valfria `climate`-entiteter som användaren själv markerar. Inga termostater väljs eller ändras automatiskt.

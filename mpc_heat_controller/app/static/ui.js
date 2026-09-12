@@ -15,7 +15,7 @@ weatherCard.classList.add('weather-card');
 const weatherGraph=document.createElement('div');weatherGraph.className='trend-graph';weatherCard.querySelector('.table-wrap').before(weatherGraph);
 fold([weatherCard.querySelector('.table-wrap')],'Visa timprognos');
 const historyCard=document.createElement('article');historyCard.className='chart-card';
-historyCard.innerHTML='<h2>Temperatur och reglering</h2><p id="trends-status">Läser mätloggen…</p><h3>Inomhus och komfortmål</h3><div id="indoor-trend" class="trend-graph"></div><h3>Utetemperatur och styrning</h3><p>Ohmigo visar inställt värde. PI-förslaget är beräknat och behöver inte vara skickat.</p><div id="control-trend" class="trend-graph"></div>';
+historyCard.innerHTML='<h2>Temperatur och reglering</h2><p id="trends-status">Läser mätloggen…</p><h3>Inomhus och komfortmål</h3><div id="indoor-trend" class="trend-graph"></div><h3>Utetemperatur och styrning</h3><p>Ohmigo visar inställt värde. PI- och MPC-förslagen är beräknade och behöver inte vara skickade.</p><div id="control-trend" class="trend-graph"></div>';
 piCard.after(historyCard);
 function plot(host,points,series,title,maxGap){
     host.replaceChildren();
@@ -34,7 +34,7 @@ function plot(host,points,series,title,maxGap){
 }
 const originalTelemetry=telemetry;
 telemetry=async function(){await originalTelemetry();try{const t=await api('telemetry');plot(weatherGraph,(t.forecast?.points||[]).filter(p=>Date.parse(p.datetime)<=Date.now()+24*3600000),[{key:'temperature',label:'Prognos utomhus',color:'#146b88'}],'Väderprognos kommande 24 timmar',5400000)}catch(e){weatherGraph.textContent='Vädergrafen kunde inte hämtas.'}};
-async function loadTrends(){try{await timeZoneReady;const r=await api('trends');$('trends-status').textContent=r.message;plot($('indoor-trend'),r.points,[{key:'indoor',label:'Inomhus',color:'#146b88'},{key:'target',label:'Börvärde',color:'#956211',dash:true}],'Inomhustemperatur och börvärde',1200000);plot($('control-trend'),r.points,[{key:'outdoor',label:'Verklig utetemperatur',color:'#527482'},{key:'applied',label:'Ohmigo inställt',color:'#146b88'},{key:'pump_outdoor',label:'Värmepump avläst',color:'#b45d24'},{key:'proposal',label:'PI-förslag',color:'#97547e',dash:true}],'Utetemperatur och reglering',1200000)}catch(e){$('trends-status').textContent='Kunde inte läsa mätloggen.'}}
+async function loadTrends(){try{await timeZoneReady;const r=await api('trends');$('trends-status').textContent=r.message;plot($('indoor-trend'),r.points,[{key:'indoor',label:'Inomhus',color:'#146b88'},{key:'target',label:'Börvärde',color:'#956211',dash:true}],'Inomhustemperatur och börvärde',1200000);plot($('control-trend'),r.points,[{key:'outdoor',label:'Verklig utetemperatur',color:'#527482'},{key:'applied',label:'Ohmigo inställt',color:'#146b88'},{key:'pump_outdoor',label:'Värmepump avläst',color:'#b45d24'},{key:'proposal',label:'PI-förslag',color:'#97547e',dash:true},{key:'mpc_proposal',label:'MPC-förslag',color:'#27835f',dash:true}],'Utetemperatur och reglering',1200000)}catch(e){$('trends-status').textContent='Kunde inte läsa mätloggen.'}}
 loadTrends();setInterval(loadTrends,60000);
 const stepNames=['Givare','Komfort & styrning','Granska'];
 const originalSetStep=setStep;

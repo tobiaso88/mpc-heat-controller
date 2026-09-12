@@ -8,6 +8,7 @@ import urllib.request
 from .pi import PI
 from .control import Control
 from .entities import EntityPublisher
+from .auto_model import AutoModel
 from datetime import datetime, timezone, timedelta
 
 def now():
@@ -113,6 +114,7 @@ class Collector:
         self.control = Control(request, data)
         self.cycle_lock = threading.RLock()
         self.publisher=EntityPublisher(request,config,self.get,data)
+        self.auto_model=AutoModel(data)
 
     def cycle(self):
         with self.cycle_lock:
@@ -154,6 +156,14 @@ class Collector:
                 self.pi.reset()
             if c['mode'] == 'shadow':
                 self.store(stamp, items, c, snapshot['pi'])
+                try:
+                    self.auto_model.maybe_train(c)
+                    snapshot['mpc']=self.auto_model.result(c,items,self.forecast.get('points',[]))
+                    self.store_mpc(stamp,snapshot['mpc'])
+                except (OSError, sqlite3.Error, ValueError):
+                    snapshot['mpc']={'state':'error','message':'Automatisk modellträning kunde inte läsas eller sparas. PI fortsätter oförändrat.','plan':[]}
+            else:
+                snapshot['mpc']={'state':'off','message':'Automatisk modellträning är pausad i demoläge.','plan':[]}
             self.control.send(c,states,snapshot['pi'])
             if self.control.get()['active']:
                 snapshot['pi']['message']='Aktiv PI. Temperaturkommandon skickas till vald utgång; se styrstatus.'
@@ -162,6 +172,7 @@ class Collector:
             self.pi.reset()
             snapshot = {'readings': [], 'forecast': {'points': [], 'message': 'Väderprognosen är inte tillgänglig.'},
                         'target_sync':{'state':'warning','message':'Termostatsynkning kan inte kontrolleras när HA-data saknas.'},
+                        'mpc':{'state':'waiting','message':'MPC väntar på giltiga mätdata.','plan':[]},
                         'sampled_at': None, 'error': 'Kunde inte läsa eller logga data. Kontrollera HA-anslutningen och ledigt lagringsutrymme.', 'logging': False}
         snapshot['config_used']=c
         with self.lock: self.snapshot = snapshot
@@ -175,6 +186,14 @@ class Collector:
             db.execute('CREATE TABLE IF NOT EXISTS pi_samples (time TEXT PRIMARY KEY, result TEXT NOT NULL)')
             db.execute('INSERT OR REPLACE INTO pi_samples VALUES (?, ?)', (stamp, json.dumps(pi)))
             db.execute('DELETE FROM pi_samples WHERE time < ?', ((now()-timedelta(days=90)).isoformat(),))
+
+    def store_mpc(self,stamp,result):
+        plan=result.get('plan') or []
+        stored={'state':result.get('state'),'signal':plan[0].get('signal') if plan else None}
+        with sqlite3.connect(self.data/'measurements.sqlite') as db:
+            db.execute('CREATE TABLE IF NOT EXISTS mpc_samples (time TEXT PRIMARY KEY, result TEXT NOT NULL)')
+            db.execute('INSERT OR REPLACE INTO mpc_samples VALUES (?,?)',(stamp,json.dumps(stored)))
+            db.execute('DELETE FROM mpc_samples WHERE time < ?',((now()-timedelta(days=90)).isoformat(),))
 
     def get(self):
         with self.lock: result=json.loads(json.dumps(self.snapshot))

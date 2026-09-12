@@ -19,6 +19,13 @@ class StoreTests(unittest.TestCase):
             model_store.save(data,'replacement',{'metrics':[]})
             self.assertEqual(model_store.load(data)['csv'],'replacement')
 
+    def test_automatic_status_does_not_require_imported_evaluation(self):
+        with tempfile.TemporaryDirectory() as d:
+            data=Path(d)
+            model_store.save_auto_status(data,{'state':'collecting'})
+            self.assertIsNone(model_store.load(data))
+            self.assertEqual(model_store.load_auto(data)['status']['state'],'collecting')
+
     def test_old_settings_and_readonly_number(self):
         self.assertEqual(validate({})['applied_signal'],'')
         c=validate({'applied_signal':'number.ohmigo'})

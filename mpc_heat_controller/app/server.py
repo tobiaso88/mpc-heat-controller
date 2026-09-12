@@ -120,6 +120,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/entities": return self.reply(200, ha_states())
             if path == '/api/trends':return self.reply(200,read_trends(DATA.resolve()))
             if path == "/api/model/saved": return self.reply(200, model_store.load(DATA))
+            if path == "/api/model/automatic": return self.reply(200, model_store.load_auto(DATA))
             if path == "/api/telemetry": return self.reply(200, COLLECTOR.get() if COLLECTOR else {})
             if path == "/api/status":
                 c = config()

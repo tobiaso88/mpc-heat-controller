@@ -17,6 +17,10 @@ class TrendTests(unittest.TestCase):
             items=[{'entity':'sensor.a','value':21,'quality':'OK'},{'entity':'sensor.b','value':None,'quality':'Saknas'},{'entity':'number.hp','value':5,'quality':'OK'}]
             with sqlite3.connect(p/'measurements.sqlite') as db:
                 db.execute('CREATE TABLE samples (time TEXT,readings TEXT,settings TEXT)')
-                db.execute('INSERT INTO samples VALUES (?,?,?)',(datetime.now(timezone.utc).isoformat(),json.dumps(items),json.dumps(c)))
+                stamp=datetime.now(timezone.utc).isoformat()
+                db.execute('INSERT INTO samples VALUES (?,?,?)',(stamp,json.dumps(items),json.dumps(c)))
+                db.execute('CREATE TABLE mpc_samples (time TEXT,result TEXT)')
+                db.execute('INSERT INTO mpc_samples VALUES (?,?)',(stamp,json.dumps({'state':'ready','signal':4.5})))
             point=read(p)['points'][0]
             self.assertIsNone(point['indoor']);self.assertEqual(point['applied'],5);self.assertEqual(point['target'],21.5)
+            self.assertEqual(point['mpc_proposal'],4.5)

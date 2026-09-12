@@ -53,11 +53,15 @@ def evaluate(content, mapping):
         if all(e in entities for e in selected):
             mean=lambda e:sum(entities[e])/len(entities[e])
             points[stamp]=(sum(mean(e) for e in indoor)/len(indoor),mean(outside),mean(signal))
+    return evaluate_points(points, mapping, invalid_rows=invalid,
+                           incomplete_hours=len(buckets)-len(points), source='csv')
+
+def evaluate_points(points, mapping, invalid_rows=0, incomplete_hours=0, source='local_log'):
     times=sorted(points)
     if len(times)<240: raise ValueError('Minst 240 kompletta timvärden behövs. Välj en längre gemensam period.')
     from .comparison import compare
     result = compare(points, solve)
-    return dict(result, status="offline_candidate", complete_hours=len(times), invalid_rows=invalid,
-                incomplete_hours=len(buckets)-len(points), mapping=mapping,
+    return dict(result, status="offline_candidate", complete_hours=len(times), invalid_rows=invalid_rows,
+                incomplete_hours=incomplete_hours, mapping=mapping, source=source,
                 message="Offlinejämförelse, inte aktiverad. Använder känd historisk utetemperatur och styrsignal, inte alternativa MPC-kommandon.",
                 aggregation="Aritmetiska timmedel. Luckor fylls inte. Blandad råhistorik och timstatistik kan ge olika viktning.")

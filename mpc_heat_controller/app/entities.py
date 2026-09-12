@@ -48,7 +48,7 @@ def identity(data):
 def discovery(instance):
     topic=f'mpc_heat_controller/{instance}/state'
     device={'identifiers':[f'mpc_heat_controller_{instance}'],'name':'MPC Heat Controller',
-            'manufacturer':'mpc-heat-controller','model':'PI heat controller','sw_version':'0.11.0'}
+            'manufacturer':'mpc-heat-controller','model':'PI heat controller','sw_version':'0.12.0'}
     configs={}
     for key,(name,kind) in SENSORS.items():
         attribute_message='value_json.target_sync_message' if key=='target_sync' else 'value_json.message'

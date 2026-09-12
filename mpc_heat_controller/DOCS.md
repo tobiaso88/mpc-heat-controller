@@ -1,4 +1,4 @@
-# MPC Heat Controller 0.11.0
+# MPC Heat Controller 0.12.0
 
 ## Grundläge och aktiv PI
 
@@ -28,13 +28,17 @@ I nollställs vid datafel, omstart, relevanta inställningsändringar, demo elle
 
 ## Loggning och modeller
 
-Mätvärden och konfiguration sparas i /data/measurements.sqlite, PI-resultat i tabellen pi_samples, med 90 dagars retention. Insamling sker cirka var femte minut i skuggläge och varje minut vid aktiv PI, även när UI är stängt. Kommandostatus visas separat. Uppföljningsrum ingår inte i temperaturmedelvärdet.
+Mätvärden och konfiguration sparas i /data/measurements.sqlite, PI-resultat i tabellen pi_samples och MPC-skuggförslag i mpc_samples, med 90 dagars retention. Insamling sker cirka var femte minut i skuggläge och varje minut vid aktiv PI, även när UI är stängt. Kommandostatus visas separat. Uppföljningsrum ingår inte i temperaturmedelvärdet.
 
 Väderprognos hämtas var 30:e minut från vald HA-entitet med hourly via weather.get_forecasts. Hämtningstid är inte leverantörens publiceringstid.
 
-Historikvyn kan granska CSV och jämföra enkel modell med fördröjningsmodell. Senaste lyckade CSV, givarval och resultat sparas i /data/model.sqlite. Alla modeller och horisonter använder gemensamma 24-timmarsfönster med sex timmars förhistorik. Träning använder första 70 procenten av kompletta timmar; senare data används för validering. Timmedel är aritmetiska, luckor fylls inte. Fördröjningsmodellen har fast ridge=0,01.
+Appens mätlogg aggregeras automatiskt till timmedel för valda reglergivare, utegivaren och Ohmigos faktiska inställda värde. Efter minst 250 kompletta timmar tränas och valideras husmodellen automatiskt, därefter högst en gång per dygn. Givarval måste vara oförändrade inom perioden. Automatisk status och modell sparas i /data/model.sqlite.
 
-Historiska framtida väder- och styrvärden används i offlineutvärderingen, inte historiska väderprognoser eller alternativa MPC-kommandon. Ingen MPC-modell aktiveras automatiskt. Egna HA-entiteter finns via MQTT Discovery enligt nedan.
+En godkänd automatisk modell används med aktuell timprognos för ett 24-timmars MPC-förslag i skuggläge. Förslaget och inomhusprognosen visas i gränssnittet men skickas aldrig till värmepumpen. Aktiv styrning fortsätter att använda PI.
+
+Historikvyn kan dessutom granska importerad CSV och jämföra enkel modell med fördröjningsmodell. Senaste lyckade CSV, givarval och resultat sparas separat i /data/model.sqlite. Alla modeller och horisonter använder gemensamma 24-timmarsfönster med sex timmars förhistorik. Träning använder första 70 procenten av kompletta timmar; senare data används för validering. Timmedel är aritmetiska, luckor fylls inte. Fördröjningsmodellen har fast ridge=0,01.
+
+Historiska framtida väder- och styrvärden används i offlineutvärderingen, inte historiska väderprognoser. Detta är en kandidatkontroll och inte ett oberoende fälttest av MPC-styrning. Egna HA-entiteter finns via MQTT Discovery enligt nedan.
 
 ## Automatisk återstart i 0.7.0
 
