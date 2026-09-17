@@ -16,8 +16,9 @@ def compare(points, solve):
     if not starts: raise ValueError('Inga gemensamma 24-timmars testfönster med sex timmars förhistorik. Välj en period med färre luckor.')
 
     def features(t, temperatures, lag):
-        temp=temperatures[t];out,u=points[t][1:]
+        temp=temperatures[t];out,u=points[t][1:3]
         x=[1.0,out-temp,temp,u]
+        if len(points[t]) > 3: x.append(points[t][3])
         if lag:
             x += [temp-temperatures[t-hour],temperatures[t-hour]-temperatures[t-2*hour],
                   sum(points[t-i*hour][2] for i in range(1,7))/6-u,
@@ -71,4 +72,4 @@ def compare(points, solve):
     return {'models':models,'coefficients':models[0]['coefficients'],'metrics':metrics,'example':example,
             'training_pairs':len(train),'split_at':cutoff.isoformat(),'common_windows':len(starts),
             'validation_start':starts[0].isoformat(),'validation_end':(starts[-1]+24*hour).isoformat(),
-            'comparison':'Alla modeller och horisonter använder samma starttider, med sex timmars förhistorik och 24 kompletta framtida timmar. Överlappande fönster är inte oberoende försök.'}
+            'comparison':'Validering med verkligt framtida uteväder och historisk styrsignal (orakel), inte arkiverade beslutsprognoser. Alla modeller och horisonter använder samma starttider, med sex timmars förhistorik och 24 kompletta framtida timmar. Överlappande fönster är inte oberoende försök.'}

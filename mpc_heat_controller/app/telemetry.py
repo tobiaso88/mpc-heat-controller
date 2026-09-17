@@ -30,7 +30,7 @@ def readings(c, states):
     for role, ids in [('Reglering', c['indoor']), ('Uppföljning', c['observe']),
                       ('Utomhus', [c['outdoor']]), ('Framledning', [c['supply']]), ('Retur', [c['return']]),
                       ('Värmepumpens avlästa utetemperatur', [c.get('pump_outdoor', '')]),
-                      ('Ohmigo inställt värde', [c.get('applied_signal', '')])]:
+                      ('Ohmigo inställt värde', [c.get('applied_signal', '')]), ('Solinstrålning', [c.get('solar', '')]), ('Molnighet', [c.get('cloud', '')])]:
         for entity in filter(None, ids):
             roles.setdefault(entity, []).append(role)
     result = []
@@ -42,7 +42,7 @@ def readings(c, states):
         try:
             value = float(s['state'])
             if not math.isfinite(value): raise ValueError()
-            if attrs.get('unit_of_measurement') != '°C':
+            if attrs.get('unit_of_measurement') != ('W/m²' if entity == c.get('solar') else '%' if entity == c.get('cloud') else '°C'):
                 quality, value = 'Fel enhet', None
             else:
                 age = (now() - datetime.fromisoformat(stamp.replace('Z', '+00:00'))).total_seconds()
@@ -92,7 +92,13 @@ def normalize_forecast(response, entity, unit, clock=None):
             if t.tzinfo is None or not math.isfinite(v): continue
             if not clock - timedelta(minutes=30) <= t <= clock + timedelta(hours=48): continue
             if unit == '°F': v = (v - 32) * 5 / 9
-            points[t] = {'datetime': t.isoformat(), 'temperature': round(v, 2)}
+            point = {'datetime': t.isoformat(), 'temperature': round(v, 2)}
+            for key, maximum in (('solar_irradiance', 1500), ('cloud_coverage', 100)):
+                try:
+                    extra = float(row[key])
+                    if math.isfinite(extra) and 0 <= extra <= maximum: point[key] = round(extra, 2)
+                except (KeyError, ValueError, TypeError): pass
+            points[t] = point
         except (KeyError, ValueError, TypeError):
             continue
     ordered = sorted(points)
@@ -143,7 +149,8 @@ class Collector:
                     points = normalize_forecast(response, entity, state.get('attributes', {}).get('temperature_unit'))
                     self.weather_time = now()
                     self.forecast = {'points': points, 'entity': entity, 'fetched_at': self.weather_time.isoformat(),
-                                     'message': 'Timprognos från Home Assistant. Hämtningstid är inte leverantörens publiceringstid.'}
+                                     'fields': [key for key in ('temperature', 'solar_irradiance', 'cloud_coverage') if any(key in p for p in points)],
+                                     'message': ('Timprognos med molnighet; solinstrålning saknas.' if any('cloud_coverage' in p for p in points) else 'Timprognos utan solfält.') if not any('solar_irradiance' in p for p in points) else 'Timprognos med solinstrålning från Home Assistant. Hämtningstid är inte leverantörens publiceringstid.'}
                 except Exception:
                     self.forecast = {'points': [], 'entity': entity, 'message': 'Kunde inte hämta aktuell timprognos. Kontrollera väderentiteten och stöd för timprognos.'}
             stamp = now().isoformat()
@@ -158,8 +165,8 @@ class Collector:
                 self.store(stamp, items, c, snapshot['pi'])
                 try:
                     self.auto_model.maybe_train(c)
-                    snapshot['mpc']=self.auto_model.result(c,items,self.forecast.get('points',[]))
-                    self.store_mpc(stamp,snapshot['mpc'])
+                    snapshot['mpc']=self.auto_model.result(c,items,self.forecast.get('points',[]),states,self.control)
+                    self.store_mpc(stamp,snapshot['mpc'],self.forecast,c)
                 except (OSError, sqlite3.Error, ValueError):
                     snapshot['mpc']={'state':'error','message':'Automatisk modellträning kunde inte läsas eller sparas. PI fortsätter oförändrat.','plan':[]}
             else:
@@ -187,13 +194,22 @@ class Collector:
             db.execute('INSERT OR REPLACE INTO pi_samples VALUES (?, ?)', (stamp, json.dumps(pi)))
             db.execute('DELETE FROM pi_samples WHERE time < ?', ((now()-timedelta(days=90)).isoformat(),))
 
-    def store_mpc(self,stamp,result):
+    def store_mpc(self,stamp,result,forecast=None,config=None):
         plan=result.get('plan') or []
         stored={'state':result.get('state'),'signal':plan[0].get('signal') if plan else None}
         with sqlite3.connect(self.data/'measurements.sqlite') as db:
             db.execute('CREATE TABLE IF NOT EXISTS mpc_samples (time TEXT PRIMARY KEY, result TEXT NOT NULL)')
             db.execute('INSERT OR REPLACE INTO mpc_samples VALUES (?,?)',(stamp,json.dumps(stored)))
             db.execute('DELETE FROM mpc_samples WHERE time < ?',((now()-timedelta(days=90)).isoformat(),))
+            db.execute('CREATE TABLE IF NOT EXISTS mpc_forecasts (time TEXT PRIMARY KEY, entity TEXT NOT NULL, fetched_at TEXT NOT NULL, fields TEXT NOT NULL, forecast TEXT NOT NULL, plan TEXT NOT NULL, mapping TEXT NOT NULL)')
+            if plan and forecast and config and forecast.get('entity') and forecast.get('fetched_at'):
+                mapping={'indoor':config['indoor'],'outdoor':config['outdoor'],'solar':config.get('solar',''),'cloud':config.get('cloud','')}
+                points=[{key:row[key] for key in ('datetime','temperature','solar_irradiance','cloud_coverage') if key in row}
+                        for row in forecast.get('points',[])[:24]]
+                fields=sorted({key for row in points for key in row if key!='datetime'})
+                db.execute('INSERT OR REPLACE INTO mpc_forecasts VALUES (?,?,?,?,?,?,?)',
+                           (stamp,forecast['entity'],forecast['fetched_at'],json.dumps(fields),json.dumps(points),json.dumps(plan),json.dumps(mapping)))
+            db.execute('DELETE FROM mpc_forecasts WHERE time < ?',((now()-timedelta(days=90)).isoformat(),))
 
     def get(self):
         with self.lock: result=json.loads(json.dumps(self.snapshot))

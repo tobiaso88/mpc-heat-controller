@@ -1,3 +1,11 @@
+# 0.13.0
+
+- MPC i skuggläge kan använda historisk solinstrålning eller molnighet tillsammans med motsvarande timprognos. Utan solunderlag används fortsatt utetemperaturmodellen.
+- En modell får status `ready` först efter kvalitetskontroll mot temperaturpersistens och rimlig, negativ skalad effekt av den simulerade utetemperatursignalen.
+- MPC-planen följer utgångens gränser, ändringstakt och 0,5 °C-steg och kräver en aktuell kontrollerad startpunkt.
+- Prognosen som fanns vid varje beräknat skuggförslag och hela planen arkiveras i högst 90 dagar. Historikvyn kan jämföra prognoser med senare mätvärden; resultatet är inte ett test av alternativa MPC-kommandon.
+- PI förblir ensam aktiv styrning. Befintliga säkerhetsspärrar och watchdogkrav är kvar.
+
 # 0.12.0
 
 - Tränar och validerar automatiskt en husmodell från appens egen 90-dagars mätlogg när minst 250 kompletta timmar finns.

@@ -7,6 +7,7 @@ import sqlite3
 import tempfile
 import threading
 import urllib.request
+from urllib.parse import parse_qs, urlsplit
 from collections import defaultdict
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -16,6 +17,7 @@ from .telemetry import Collector, readings, request as ha_request
 from .model import evaluate
 from . import model_store
 from .trends import read as read_trends
+from .shadow_evaluation import read as read_shadow_evaluation
 
 DATA = Path(os.environ.get("MPC_DATA", "./data"))
 STATIC = Path(__file__).parent / "static"
@@ -119,6 +121,10 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/config": return self.reply(200, config())
             if path == "/api/entities": return self.reply(200, ha_states())
             if path == '/api/trends':return self.reply(200,read_trends(DATA.resolve()))
+            if path == '/api/mpc/evaluation':
+                params=parse_qs(urlsplit(self.path).query)
+                return self.reply(200,read_shadow_evaluation(DATA.resolve(),
+                    limit=int(params.get('limit',['24'])[0]), before=params.get('before',[None])[0]))
             if path == "/api/model/saved": return self.reply(200, model_store.load(DATA))
             if path == "/api/model/automatic": return self.reply(200, model_store.load_auto(DATA))
             if path == "/api/telemetry": return self.reply(200, COLLECTOR.get() if COLLECTOR else {})

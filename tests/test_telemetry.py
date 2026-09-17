@@ -28,6 +28,17 @@ class TelemetryTests(unittest.TestCase):
         result=normalize_forecast({'service_response':{'weather.x':{'forecast':rows}}},'weather.x','°F',t)
         self.assertEqual(len(result),3);self.assertEqual(result[0]['temperature'],10)
 
+    def test_optional_solar_fields(self):
+        t=datetime.now(timezone.utc)
+        rows=[{'datetime':(t+timedelta(hours=h)).isoformat(),'temperature':5,
+               'solar_irradiance':600,'cloud_coverage':20} for h in (0,1)]
+        result=normalize_forecast({'service_response':{'weather.x':{'forecast':rows}}},'weather.x','°C',t)
+        self.assertEqual(result[0]['solar_irradiance'],600)
+        self.assertEqual(result[0]['cloud_coverage'],20)
+        del rows[0]['solar_irradiance']
+        result=normalize_forecast({'service_response':{'weather.x':{'forecast':rows}}},'weather.x','°C',t)
+        self.assertNotIn('solar_irradiance',result[0])
+
     def test_stale_or_gapped_forecast_rejected(self):
         t=datetime.now(timezone.utc)
         for hours in ([-4,-3],[0,5]):

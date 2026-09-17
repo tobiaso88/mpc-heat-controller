@@ -18,10 +18,12 @@ TRAIN_INTERVAL = timedelta(hours=24)
 def mapping_for(config):
     mapping = {'indoor': sorted(config.get('indoor', [])),
                'outdoor': config.get('outdoor', ''),
-               'signal': config.get('applied_signal', '')}
+               'signal': config.get('applied_signal', ''), 'solar': config.get('solar', ''), 'cloud': config.get('cloud', '')}
     if not mapping['indoor'] or not mapping['outdoor'] or not mapping['signal']:
         return None
-    if len(set(mapping['indoor'] + [mapping['outdoor'], mapping['signal']])) != len(mapping['indoor']) + 2:
+    if mapping['solar'] and mapping['cloud']: return None
+    selected = mapping['indoor'] + [mapping['outdoor'], mapping['signal']] + list(filter(None, [mapping['solar'], mapping['cloud']]))
+    if len(set(selected)) != len(selected):
         return None
     return mapping
 
@@ -33,7 +35,7 @@ def local_points(data, mapping):
         return {}, {'samples': 0, 'incomplete_hours': 0, 'excluded_samples': 0}
     with closing(sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)) as db:
         rows = db.execute('SELECT time, readings, settings FROM samples ORDER BY time').fetchall()
-    wanted = mapping['indoor'] + [mapping['outdoor'], mapping['signal']]
+    wanted = mapping['indoor'] + [mapping['outdoor'], mapping['signal']] + ([mapping['solar']] if mapping.get('solar') else [mapping['cloud']] if mapping.get('cloud') else [])
     buckets = defaultdict(lambda: defaultdict(list))
     excluded = 0
     for stamp, raw_readings, raw_settings in rows:
@@ -41,7 +43,7 @@ def local_points(data, mapping):
             settings = json.loads(raw_settings)
             if (sorted(settings.get('indoor', [])) != mapping['indoor'] or
                     settings.get('outdoor') != mapping['outdoor'] or
-                    settings.get('applied_signal') != mapping['signal']):
+                    settings.get('applied_signal') != mapping['signal'] or settings.get('solar', '') != mapping.get('solar', '') or settings.get('cloud', '') != mapping.get('cloud', '')):
                 excluded += 1
                 continue
             moment = datetime.fromisoformat(stamp.replace('Z', '+00:00'))
@@ -62,7 +64,7 @@ def local_points(data, mapping):
         if all(entities.get(entity) for entity in wanted):
             mean = lambda entity: sum(entities[entity]) / len(entities[entity])
             points[hour] = (sum(mean(entity) for entity in mapping['indoor']) / len(mapping['indoor']),
-                            mean(mapping['outdoor']), mean(mapping['signal']))
+                            mean(mapping['outdoor']), mean(mapping['signal'])) + ((mean(mapping['solar']),) if mapping.get('solar') else (mean(mapping['cloud']),) if mapping.get('cloud') else ())
     return points, {'samples': len(rows), 'incomplete_hours': len(buckets) - len(points),
                     'excluded_samples': excluded}
 
@@ -72,35 +74,81 @@ def _predict(model, values):
                zip(model['coefficients'], values, model['means'], model['scales']))
 
 
-def live_plan(report, indoor, applied, forecast, config):
-    """Optimize a display-only 24-hour plan with the validated linear model."""
-    if not report or indoor is None or applied is None or len(forecast) < 24:
+def forecast_day(forecast):
+    if len(forecast) < 24: return []
+    try:
+        times = [datetime.fromisoformat(row['datetime'].replace('Z', '+00:00')) for row in forecast[:24]]
+        if any(t.tzinfo is None for t in times): return []
+        now = datetime.now(timezone.utc)
+        if not now-timedelta(minutes=30) <= times[0] <= now+timedelta(hours=2): return []
+        if any(not timedelta(minutes=30) <= b-a <= timedelta(minutes=90) for a,b in zip(times,times[1:])): return []
+        if times[-1] < now+timedelta(hours=22): return []
+        if any(not math.isfinite(float(row['temperature'])) for row in forecast[:24]): return []
+        return forecast[:24]
+    except (KeyError, TypeError, ValueError, AttributeError): return []
+
+
+def live_plan(report, indoor, applied, forecast, config, output=None):
+    """Display-only hourly plan; each signal is on the output's 0.5 °C grid."""
+    day = forecast_day(forecast)
+    if not report or indoor is None or applied is None or not day or not output or output.get('state') != 'confirmed':
         return []
     try:
         model = next(m for m in report['models'] if m['name'] == 'linear')
-        candidates = [(0.0, float(indoor), float(applied), [])]
-        step = float(config['max_step'])
-        for row in forecast[:24]:
-            outside = float(row['temperature'])
-            expanded = []
+        solar = bool(report.get('mapping', {}).get('solar'))
+        cloud = bool(report.get('mapping', {}).get('cloud'))
+        field = 'solar_irradiance' if solar else 'cloud_coverage' if cloud else None
+        if field and any(field not in row for row in day): return []
+        lo=max(float(output['min']),float(config['signal_min']))
+        hi=min(float(output['max']),float(config['signal_max']))
+        first=math.ceil(lo*2-1e-9);last=math.floor(hi*2+1e-9)
+        if first>last or not lo<=applied<=hi: return []
+        candidates=[(0.0,float(indoor),float(applied),[])]
+        for row in day:
+            outside=float(row['temperature']);expanded=[]
             for cost, temperature, previous, path in candidates:
-                for delta in (-step, 0.0, step):
-                    signal = min(config['signal_max'], max(config['signal_min'], previous + delta))
-                    change = _predict(model, [1.0, outside-temperature, temperature, signal])
-                    predicted = temperature + change
-                    if not math.isfinite(predicted) or abs(predicted) > 100:
-                        continue
-                    violation = max(config['comfort_min']-predicted, 0, predicted-config['comfort_max'])
-                    score = cost + (predicted-config['target'])**2 + 20*violation**2 + 0.02*delta**2
-                    expanded.append((score, predicted, signal, path + [{
-                        'datetime': row['datetime'], 'indoor': round(predicted, 3),
-                        'outdoor': round(outside, 2), 'signal': round(signal, 2)}]))
-            if not expanded:
-                return []
-            candidates = sorted(expanded, key=lambda item: item[0])[:60]
+                allowance=min(float(config['max_step']),float(config['pi_rate']))
+                for tick in range(max(first,math.ceil((previous-allowance)*2-1e-9)),
+                                  min(last,math.floor((previous+allowance)*2+1e-9))+1):
+                    signal=tick/2
+                    features=[1.0,outside-temperature,temperature,signal]
+                    if field: features.append(float(row[field]))
+                    predicted=temperature+_predict(model,features)
+                    if not math.isfinite(predicted) or abs(predicted)>100: continue
+                    violation=max(config['comfort_min']-predicted,0,predicted-config['comfort_max'])
+                    score=cost+(predicted-config['target'])**2+20*violation**2+0.02*(signal-previous)**2
+                    expanded.append((score,predicted,signal,path+[{'datetime':row['datetime'],
+                        'indoor':round(predicted,3),'outdoor':round(outside,2),'signal':signal}]))
+            if not expanded: return []
+            candidates=sorted(expanded,key=lambda item:item[0])[:60]
         return candidates[0][3]
-    except (KeyError, TypeError, ValueError, StopIteration):
-        return []
+    except (KeyError,TypeError,ValueError,OverflowError,StopIteration): return []
+
+
+def signal_effect(report):
+    """Indoor degrees per hour from one degree higher simulated outdoor signal."""
+    try:
+        model = next(m for m in report['models'] if m['name'] == 'linear')
+        scale = float(model['scales'][3])
+        if not math.isfinite(scale) or scale <= 0:
+            return None
+        effect = float(model['coefficients'][3]) / scale
+        return effect if math.isfinite(effect) else None
+    except (KeyError, IndexError, TypeError, ValueError, ZeroDivisionError, StopIteration):
+        return None
+
+
+def quality(report):
+    """Conservative oracle-weather gate; deployment forecast quality is still unknown."""
+    effect = signal_effect(report)
+    if effect is None or not -0.5 <= effect <= -0.001:
+        return False
+    metrics={m['hours']:m for m in report['metrics']}
+    for h in (6,12,24):
+        m=metrics[h]
+        if m['windows']<24 or m['mae']>0.8 or m['mae']>0.85*m['baseline_mae']:
+            return False
+    return True
 
 
 class AutoModel:
@@ -144,6 +192,7 @@ class AutoModel:
                 return
             try:
                 report = evaluate_points(points, mapping, incomplete_hours=info['incomplete_hours'], source='local_log')
+                if not quality(report): raise ValueError('Modellkvaliteten räcker inte: styrsignalens skalade effekt måste vara mellan −0,5 och −0,001 °C/h per °C; 6, 12 och 24 h kräver minst 24 fönster, MAE ≤0,8 °C och minst 15 % lägre MAE än temperaturpersistens.')
                 status.update({'state': 'ready', 'message': 'Automatisk modell tränad och validerad från appens mätlogg.',
                                'trained_at': clock.isoformat()})
                 model_store.save_auto(self.data, report, status)
@@ -153,7 +202,7 @@ class AutoModel:
         finally:
             self.lock.release()
 
-    def result(self, config, readings, forecast):
+    def result(self, config, readings, forecast, states=None, control=None):
         saved = model_store.load_auto(self.data)
         if not saved:
             return {'state': 'waiting', 'message': 'Väntar på första kontrollen av mätloggen.', 'plan': []}
@@ -168,10 +217,30 @@ class AutoModel:
         if mapping and all(values.get(e) is not None for e in mapping['indoor']):
             inside = sum(values[e] for e in mapping['indoor']) / len(mapping['indoor'])
         applied = values.get(mapping['signal']) if mapping else None
-        plan = live_plan(report if status.get('state') == 'ready' else None, inside, applied, forecast, config)
+        output=None
+        if mapping and states is not None:
+            state=next((s for s in states if s.get('entity_id')==mapping['signal']), {})
+            attrs=state.get('attributes', {})
+            try:
+                low=float(attrs['min']);high=float(attrs['max']);step=float(attrs['step'])
+                current=float(state['state'])
+                active=bool(control and control.get().get('active'))
+                confirmed=active and control.pending_ack is None and control.last_sent is not None and abs(current-control.last_sent)<=step/2+1e-6
+                stamp=state.get('last_reported') or state.get('last_updated')
+                recent=stamp and 0 <= (datetime.now(timezone.utc)-datetime.fromisoformat(stamp.replace('Z','+00:00'))).total_seconds() <= 86400
+                if (mapping['signal'].startswith('number.') and not attrs.get('restored') and
+                    attrs.get('unit_of_measurement')=='°C' and all(math.isfinite(v) for v in (low,high,step,current)) and
+                    step>0 and abs(0.5/step-round(0.5/step))<1e-6 and abs(low/step-round(low/step))<1e-6 and
+                    (confirmed or recent) and applied is not None and abs(applied-current)<1e-6):
+                    output={'state':'confirmed','min':low,'max':high,'step':step}
+            except (KeyError,ValueError,TypeError,AttributeError): pass
+        valid_model = bool(report and quality(report))
+        plan = live_plan(report if status.get('state') == 'ready' and valid_model else None, inside, applied, forecast, config, output)
         message = status.get('message', '')
-        if report and status.get('state') == 'ready' and not plan:
-            message += ' Liveförslag väntar på giltiga mätvärden och 24 timmars väderprognos.'
+        if report and status.get('state') == 'ready' and not valid_model:
+            message += ' Sparad modell har felvänd eller orimlig styrverkan och spärras.'
+        elif report and status.get('state') == 'ready' and not plan:
+            message += ' Liveförslag väntar på färsk, bekräftad number-utgång, giltiga mätvärden och 24 timmars matchande väderprognos.'
         elif plan:
             message += ' MPC-förslaget är endast skuggläge och skickas inte.'
         return dict(status, report=report, plan=plan, message=message)

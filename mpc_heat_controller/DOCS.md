@@ -1,4 +1,4 @@
-# MPC Heat Controller 0.12.0
+# MPC Heat Controller 0.13.0
 
 ## Grundläge och aktiv PI
 
@@ -77,3 +77,21 @@ Vädergrafen visar prognostemperaturer för kommande 24 timmar. Timtabellen finn
 På mobil kan grafer rullas i sidled för läsbara tidsaxlar. Tabeller visas som märkta kort. Ohmigos inställda värde är fortfarande inte en kvittens från värmepumpen.
 
 Välj vid behov **Värmepumpens avlästa utetemperatur (valfri)** i Inställningar. Det är pumpens uppfattade temperatur efter Ohmigo, inte verklig utetemperatur. Givaren används endast för uppföljning och loggning; bortfall stoppar inte PI. Historik för givaren samlas från att den valts.
+
+## Sol i skuggförslaget och modellgränser
+
+Appen läser faktisk `weather.get_forecasts`-respons för vald timväderentitet. `temperature` krävs. `cloud_coverage` (%) och det leverantörsspecifika `solar_irradiance` (W/m²) tas med endast när de finns och är giltiga. Gränssnittet visar tillgängliga fält och markerar avsaknad av solinstrålningsprognos. Home Assistants generella prognosformat dokumenterar `cloud_coverage`, men garanterar inte solinstrålning. Vald väderentitets verkliga stöd måste därför kontrolleras i appen; källan kan inte identifieras från denna kodbas.
+
+Välj en historisk W/m²-sensor för solinstrålning eller en %-sensor för molnighet, beroende på vilket fält timprognosen faktiskt ger under hela kommande dygnet. Modellen tränas enbart på samma storhet som planen använder. Utan valt solunderlag används en temperaturbaserad modell. Vid valt solunderlag men för få kompletta timmar eller saknat prognosfält visas inget MPC-förslag. Minst 250 kompletta timvärden krävs.
+
+`ready` kräver minst 24 valideringsfönster samt MAE högst 0,8 °C vid 6, 12 och 24 timmar och minst 15 % förbättring mot att hålla aktuell rumstemperatur konstant. Gränserna är en konservativ spärr mot svaga modeller, inte en garanti för driftprestanda. Valideringen använder **verkligt framtida väder** och historisk styrsignal, vilket ger modellen bättre väderinformation än den hade haft vid beslut. Några arkiverade `weather.get_forecasts`-svar från beslutstillfällena finns ännu inte; utvärdering mot **då tillgängliga prognoser** kan därför inte rapporteras eller användas som bevis för prognoskvalitet. Överlappande fönster är dessutom beroende.
+
+Planen kräver aktuell bekräftad `number`-utgång med gränser och steg som stöder 0,5 °C. Den begränsas till både entitetens och appens signalgränser, appens timsteg och PI:s ändringstakt per timme. Planen är fortfarande enbart visning; endast PI har skrivväg till Home Assistant och dess watchdogkrav gäller oförändrat.
+
+## Arkiverad utvärdering av skuggförslag
+
+Varje beräknat MPC-skuggförslag sparas i `mpc_forecasts` med beslutstid, vald väderentitet, tid då prognosen hämtades, fältnamn, de 24 prognostimmarna som användes, hela föreslagna signal- och temperaturbanan samt givarval. Tabellen rensas efter 90 dagar, liksom övrig mätlogg. `GET /api/mpc/evaluation` och knappen i historikvyn jämför de senaste mogna förslagen med giltiga mätvärden inom 30 minuter från respektive prognostimme. Saknade mätningar fylls inte i. Prognos för uteväder (och valt solfält) jämförs vid sin prognostid; MPC:s inomhusprognos jämförs vid den tid som planen anger. Gränssnittet visar senaste jämförelsen; API:et returnerar upp till 24 mogna förslag med timrader och medelfel.
+
+Detta är **utvärdering av skuggförslag**. Inomhustemperaturen som senare mäts upp påverkades av verklig PI-styrning och faktiskt väder. Jämförelsen kan visa prognosfel under den körningen, men inte hur huset skulle ha reagerat på andra MPC-kommandon. Den bevisar därför inte att MPC-styrning skulle förbättra komfort eller energianvändning.
+
+En modell får inte `ready` om den skalade signalkoefficienten (`koefficient / skala`) inte ligger mellan −0,5 och −0,001 °C inomhus per timme för 1 °C högre simulerad utetemperatur. Negativt tecken är nödvändigt eftersom högre signal betyder mindre värme i denna installation. Gränserna stoppar både felvänd och orimligt stark eller försumbar effekt. Detta är en plausibilitetsspärr, inte ett kausalt bevis på signalens effekt.
