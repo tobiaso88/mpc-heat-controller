@@ -53,6 +53,25 @@ def ha_states():
         states = json.load(response)
     return {"connected": True, "entities": [s for s in states if s["entity_id"].startswith(("sensor.", "weather.", "number.", "automation.", "climate."))]}
 
+def pv_source_options():
+    """List installed sources even before the Energy dashboard is configured."""
+    entries = ha_request('config/config_entries/entry?domain=forecast_solar')
+    forecast_available = True
+    try:
+        prefs, forecasts = energy_data()
+    except Exception:
+        prefs, forecasts = {}, {}
+        forecast_available = False
+    available = pv_sources(entries, prefs, forecasts)
+    message = ('Välj prognosen som hör till dina solpaneler.' if any(source['has_forecast'] for source in available)
+               else 'Forecast.Solar hittades, men Energipanelens prognos kunde inte läsas. Kontrollera appens HA-anslutning.'
+               if available and not forecast_available
+               else 'Forecast.Solar är kopplad i Energipanelen men timprognosen saknas just nu.'
+               if any(source['linked'] for source in available)
+               else 'Forecast.Solar hittades. Koppla prognosen till solproduktionen i Home Assistants Energipanel för att få timvärden.'
+               if available else 'Ingen installerad Forecast.Solar-källa hittades i Home Assistant.')
+    return {'sources': available, 'message': message}
+
 def status(c, source):
     if c["mode"] == "demo":
         return {"mode": "demo", "message": "Simulerat hus och simulerat väder. Modellen är inte kalibrerad.", "temperature": 21.1, "plan": simulate(c)}
@@ -123,10 +142,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/entities": return self.reply(200, ha_states())
             if path == "/api/pv-sources":
                 try:
-                    prefs, forecasts = energy_data()
-                    return self.reply(200, {'sources': pv_sources(prefs, forecasts), 'message': 'Välj prognosen som hör till dina solpaneler.'})
+                    return self.reply(200, pv_source_options())
                 except Exception:
-                    return self.reply(200, {'sources': [], 'message': 'Ingen timprognos hittades. Koppla Forecast.Solar till solproduktionen i Home Assistants Energipanel.'})
+                    return self.reply(200, {'sources': [], 'message': 'Kunde inte läsa installerade Forecast.Solar-källor från Home Assistant. Kontrollera anslutningen och starta om appen.'})
             if path == '/api/trends':return self.reply(200,read_trends(DATA.resolve()))
             if path == '/api/mpc/evaluation':
                 params=parse_qs(urlsplit(self.path).query)

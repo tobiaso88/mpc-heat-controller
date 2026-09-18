@@ -1,3 +1,8 @@
+# 0.15.1
+
+- Forecast.Solar-listan visar installerade källor även innan de kopplats till Energipanelen. Appen förklarar när timprognos saknas och kan uppdatera listan utan omladdning.
+- Urvalet av prognoskälla är fortsatt frivilligt. MPC använder inte solcellsprognosen utan en kopplad Energy-källa och matchande historisk produktion. PI är oförändrad.
+
 # 0.15.0
 
 - Valbar växelriktarsensor i W/kW och valbar Forecast.Solar-källa från Home Assistants Energipanel. Matchad timprognos kan användas av en validerad solcellsmodell i MPC:s skuggläge.

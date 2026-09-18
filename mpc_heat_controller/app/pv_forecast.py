@@ -5,16 +5,16 @@ import os
 from datetime import datetime, timedelta, timezone
 
 
-def _call(socket, command, message_id):
-    socket.send(json.dumps({'id': message_id, 'type': command}))
+def _call(socket, command, message_id, **fields):
+    socket.send(json.dumps({'id': message_id, 'type': command, **fields}))
     reply = json.loads(socket.recv())
     if reply.get('id') != message_id or not reply.get('success'):
-        raise ValueError('Home Assistant saknar vald solprognos i Energipanelen.')
+        raise ValueError('Home Assistant kunde inte lämna ' + command + '.')
     return reply['result']
 
 
 def energy_data():
-    """Return configured Energy forecast sources and their hourly Wh forecasts."""
+    """Return Energy dashboard preferences and hourly Wh forecasts."""
     token = os.environ.get('SUPERVISOR_TOKEN')
     if not token:
         raise ValueError('Home Assistant är inte ansluten.')
@@ -27,21 +27,44 @@ def energy_data():
         socket.send(json.dumps({'type': 'auth', 'access_token': token}))
         if json.loads(socket.recv()).get('type') != 'auth_ok':
             raise ValueError('Home Assistant nekade åtkomst till solprognosen.')
-        prefs = _call(socket, 'energy/get_prefs', 1)
-        forecasts = _call(socket, 'energy/solar_forecast', 2)
+        try:
+            prefs = _call(socket, 'energy/get_prefs', 1) or {}
+        except ValueError:
+            # An installed Forecast.Solar instance remains selectable before
+            # the user has configured an Energy dashboard.
+            prefs = {}
+        try:
+            forecasts = _call(socket, 'energy/solar_forecast', 2) or {}
+        except ValueError:
+            forecasts = {}
         return prefs, forecasts
     finally:
         socket.close()
 
 
-def sources(prefs, forecasts):
+def sources(entries, prefs, forecasts):
+    """Installed sources stay visible even when Energy is not configured."""
+    linked = {
+        entry: source.get('stat_energy_from')
+        for source in prefs.get('energy_sources', [])
+        if source.get('type') == 'solar'
+        for entry in source.get('config_entry_solar_forecast') or []
+    }
     result = []
-    for source in prefs.get('energy_sources', []):
-        if source.get('type') != 'solar':
+    for entry in entries:
+        if not isinstance(entry, dict) or entry.get('domain') != 'forecast_solar' or entry.get('disabled_by'):
             continue
-        for entry in source.get('config_entry_solar_forecast') or []:
-            if entry not in [item['id'] for item in result]:
-                result.append({'id': entry, 'label': 'Solprognos för ' + (source.get('stat_energy_from') or 'solceller') + ' · ' + entry[:8]})
+        entry_id = entry.get('entry_id')
+        if not isinstance(entry_id, str) or not entry_id:
+            continue
+        name = entry.get('title') or 'Forecast.Solar'
+        is_linked = entry_id in linked
+        has_forecast = bool(forecasts.get(entry_id, {}).get('wh_hours'))
+        suffix = (' · ' + str(linked[entry_id]) if linked.get(entry_id) else '') if is_linked else ' · koppla i Energipanelen'
+        if is_linked and not has_forecast:
+            suffix += ' · timprognos saknas'
+        result.append({'id': entry_id, 'label': name + suffix, 'linked': is_linked,
+                       'has_forecast': has_forecast})
     return result
 
 

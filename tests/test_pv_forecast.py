@@ -8,6 +8,7 @@ from unittest.mock import patch
 from app.core import validate
 from app.pv_forecast import combine, energy_data, hourly, sources
 from app.telemetry import readings
+from app.server import pv_source_options
 
 
 class PVForecastTests(unittest.TestCase):
@@ -33,17 +34,37 @@ class PVForecastTests(unittest.TestCase):
 
     def test_energy_forecast_source_and_hourly_matching(self):
         entry = 'a' * 32
+        entries = [{'entry_id': entry, 'domain': 'forecast_solar', 'title': 'Tak sydost'}]
         prefs = {'energy_sources': [{'type': 'solar', 'stat_energy_from': 'sensor.pv_energy',
                                     'config_entry_solar_forecast': [entry]}]}
         start = datetime(2026, 6, 1, 22, tzinfo=timezone.utc)
         forecast = {entry: {'wh_hours': {(start + timedelta(hours=h)).isoformat(): 100 if h else 0
                                            for h in range(24)}}}
-        self.assertEqual(sources(prefs, forecast)[0]['id'], entry)
+        self.assertEqual(sources(entries, prefs, forecast)[0]['id'], entry)
+        self.assertTrue(sources(entries, prefs, forecast)[0]['linked'])
+        self.assertIn('timprognos saknas', sources(entries, prefs, {})[0]['label'])
         power = hourly(forecast, entry)
         weather = [{'datetime': (start + timedelta(hours=h)).isoformat(), 'temperature': 5} for h in range(24)]
         combined = combine(weather, power)
         self.assertEqual([p['pv_power'] for p in combined], [0] + [100] * 23)
         self.assertNotIn('pv_power', combine(weather, {})[0])
+
+    def test_installed_source_is_selectable_before_energy_dashboard_setup(self):
+        entry = 'a' * 32
+        entries = [{'entry_id': entry, 'domain': 'forecast_solar', 'title': 'Tak sydost'}]
+        result = sources(entries, {}, {})
+        self.assertEqual(result[0]['id'], entry)
+        self.assertFalse(result[0]['linked'])
+        self.assertIn('koppla i Energipanelen', result[0]['label'])
+        self.assertEqual(sources([{'entry_id': 'b' * 32, 'domain': 'forecast_solar', 'disabled_by': 'user'}], {}, {}), [])
+
+    def test_source_list_uses_installed_entries_even_if_energy_websocket_fails(self):
+        entries = [{'entry_id': 'a' * 32, 'domain': 'forecast_solar', 'title': 'Tak sydost'}]
+        with patch('app.server.ha_request', return_value=entries) as rest, patch('app.server.energy_data', side_effect=OSError('offline')):
+            result = pv_source_options()
+        rest.assert_called_once_with('config/config_entries/entry?domain=forecast_solar')
+        self.assertEqual(result['sources'][0]['id'], 'a' * 32)
+        self.assertIn('kunde inte läsas', result['message'])
 
     def test_missing_midnight_zero_is_restored_only_between_known_hours(self):
         entry = 'b' * 32
@@ -57,7 +78,7 @@ class PVForecastTests(unittest.TestCase):
         class Socket:
             def __init__(self):
                 self.responses = iter([{'type': 'auth_required'}, {'type': 'auth_ok'},
-                                       {'id': 1, 'success': True, 'result': {'energy_sources': []}},
+                                       {'id': 1, 'success': False, 'error': {'code': 'not_found'}},
                                        {'id': 2, 'success': True, 'result': {}}])
                 self.sent = []
             def recv(self): return json.dumps(next(self.responses))
@@ -65,7 +86,7 @@ class PVForecastTests(unittest.TestCase):
             def close(self): pass
         socket = Socket()
         with patch.dict('os.environ', {'SUPERVISOR_TOKEN': 'test'}), patch.dict(sys.modules, {'websocket': SimpleNamespace(create_connection=lambda *args, **kwargs: socket)}):
-            self.assertEqual(energy_data(), ({'energy_sources': []}, {}))
+            self.assertEqual(energy_data(), ({}, {}))
         self.assertEqual([message['type'] for message in socket.sent], ['auth', 'energy/get_prefs', 'energy/solar_forecast'])
 
 

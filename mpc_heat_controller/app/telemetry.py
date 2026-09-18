@@ -196,9 +196,10 @@ class Collector:
             if pv_entry and (self.pv_time is None or (now()-self.pv_time).total_seconds() >= 1800):
                 try:
                     prefs, forecasts = energy_data()
-                    available = pv_sources(prefs, forecasts)
-                    if pv_entry not in [source['id'] for source in available]:
-                        raise ValueError('Vald Forecast.Solar-källa saknas i Energipanelens solprognoser.')
+                    available = pv_sources([{'entry_id': pv_entry, 'domain': 'forecast_solar'}], prefs, forecasts)
+                    selected = available[0]
+                    if not selected['linked']:
+                        raise ValueError('Vald Forecast.Solar-källa behöver kopplas till solproduktionen i Home Assistants Energipanel.')
                     power = pv_hourly(forecasts, pv_entry)
                     if not power: raise ValueError('Forecast.Solar gav ingen giltig timprognos.')
                     self.pv_power_hours = power
