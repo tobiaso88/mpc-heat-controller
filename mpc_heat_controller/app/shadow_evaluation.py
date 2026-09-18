@@ -16,6 +16,8 @@ def _nearest(samples, target, mapping, entity):
                 settings.get('outdoor') != mapping['outdoor'] or
                 settings.get('solar', '') != mapping['solar'] or
                 settings.get('cloud', '') != ('' if mapping.get('cloud_auto') else mapping['cloud']) or
+                settings.get('pv_power', '') != mapping.get('pv_power', '') or
+                settings.get('pv_forecast', '') != mapping.get('pv_forecast', '') or
                 mapping.get('cloud_auto') and settings.get('weather') != mapping.get('weather')):
             continue
         distance = abs((_time(stamp)-target).total_seconds())
@@ -68,13 +70,20 @@ def read(data, limit=24, before=None):
                     item['forecast_'+field]=weather[field]
                     item['actual_'+field]=actual
                     item['actual_'+field+'_at']=actual_at
+            if 'pv_power' in weather:
+                actual, actual_at = _nearest(samples,_time(weather['datetime']),mapping,mapping.get('pv_power')) if mapping.get('pv_power') else (None,None)
+                item['forecast_pv_power'] = weather['pv_power']
+                item['actual_pv_power'] = actual
+                item['actual_pv_power_at'] = actual_at
             points.append(item)
         def mae(forecast_key,actual_key):
             errors=[abs(p[forecast_key]-p[actual_key]) for p in points if p.get(actual_key) is not None and p.get(forecast_key) is not None]
             return round(sum(errors)/len(errors),3) if errors else None
         proposals.append({'time':stamp,'weather_entity':entity,'forecast_fetched_at':fetched,
+                          'pv_forecast_source':mapping.get('pv_forecast'),'pv_forecast_fetched_at':mapping.get('pv_fetched_at'),
                           'fields':json.loads(fields),'points':points,
                           'outdoor_mae':mae('forecast_outdoor','actual_outdoor'),
+                          'pv_power_mae':mae('forecast_pv_power','actual_pv_power'),
                           'indoor_mae':mae('predicted_indoor','actual_indoor')})
     return {'kind':'shadow_proposal_evaluation','proposals':proposals,
             'next_before':(datetime.fromisoformat(proposals[-1]['time'])-timedelta(microseconds=1)).isoformat() if proposals else None,

@@ -9,6 +9,7 @@ from .pi import PI
 from .control import Control
 from .entities import EntityPublisher
 from .auto_model import AutoModel
+from .pv_forecast import energy_data, sources as pv_sources, hourly as pv_hourly, combine as combine_pv
 from datetime import datetime, timezone, timedelta
 
 def now():
@@ -30,7 +31,8 @@ def readings(c, states):
     for role, ids in [('Reglering', c['indoor']), ('Uppföljning', c['observe']),
                       ('Utomhus', [c['outdoor']]), ('Framledning', [c['supply']]), ('Retur', [c['return']]),
                       ('Värmepumpens avlästa utetemperatur', [c.get('pump_outdoor', '')]),
-                      ('Ohmigo inställt värde', [c.get('applied_signal', '')]), ('Solinstrålning', [c.get('solar', '')]), ('Molnighet', [c.get('cloud', '')])]:
+                      ('Ohmigo inställt värde', [c.get('applied_signal', '')]), ('Solinstrålning', [c.get('solar', '')]), ('Molnighet', [c.get('cloud', '')]),
+                      ('Solcellsproduktion', [c.get('pv_power', '')])]:
         for entity in filter(None, ids):
             roles.setdefault(entity, []).append(role)
     result = []
@@ -42,11 +44,15 @@ def readings(c, states):
         try:
             value = float(s['state'])
             if not math.isfinite(value): raise ValueError()
-            if attrs.get('unit_of_measurement') != ('W/m²' if entity == c.get('solar') else '%' if entity == c.get('cloud') else '°C'):
+            unit = attrs.get('unit_of_measurement')
+            expected = ('W/m²',) if entity == c.get('solar') else ('%',) if entity == c.get('cloud') else ('W', 'kW') if entity == c.get('pv_power') else ('°C',)
+            if unit not in expected or entity == c.get('pv_power') and value < 0:
                 quality, value = 'Fel enhet', None
             else:
+                if entity == c.get('pv_power') and unit == 'kW': value *= 1000
                 age = (now() - datetime.fromisoformat(stamp.replace('Z', '+00:00'))).total_seconds()
-                quality = 'OK' if -60 <= age <= 86400 else 'Rapporttid utanför tillåtet intervall (högst 24 h)'
+                max_age = 1800 if entity == c.get('pv_power') else 86400
+                quality = 'OK' if -60 <= age <= max_age else ('Solcellsproduktionen är äldre än 30 minuter' if entity == c.get('pv_power') else 'Rapporttid utanför tillåtet intervall (högst 24 h)')
                 if attrs.get('restored'):quality='Återställt värde, väntar på rapport'
         except (ValueError, TypeError, KeyError, AttributeError):
             value = None
@@ -135,6 +141,9 @@ class Collector:
         self.lock = threading.Lock()
         self.snapshot = {'readings': [], 'forecast': {'points': [], 'message': 'Väntar på första hämtningen.'}, 'target_sync':{'state':'off','message':'Väntar på första kontrollen.'}, 'sampled_at': None, 'error': None}
         self.weather_key, self.weather_time = None, None
+        self.pv_key, self.pv_time = None, None
+        self.pv_power_hours = {}
+        self.pv_status = {'message': 'Ingen solcellsprognos vald.', 'sources': []}
         self.forecast = {'points': [], 'message': 'Ingen väderentitet vald.'}
         self.wake = threading.Event()
         self.pi = PI()
@@ -177,8 +186,39 @@ class Collector:
                                      'message': ('Timprognos med molnighet; solinstrålning saknas.' if any('cloud_coverage' in p for p in points) else 'Timprognos utan solfält.') if not any('solar_irradiance' in p for p in points) else 'Timprognos med solinstrålning från Home Assistant. Hämtningstid är inte leverantörens publiceringstid.'}
                 except Exception:
                     self.forecast = {'points': [], 'entity': entity, 'message': 'Kunde inte hämta aktuell timprognos. Kontrollera väderentiteten och stöd för timprognos.'}
+            pv_entry = c.get('pv_forecast', '')
+            if pv_entry != self.pv_key:
+                self.pv_key, self.pv_time = pv_entry, None
+                self.pv_power_hours = {}
+                self.forecast['points'] = [{k:v for k,v in point.items() if k != 'pv_power'} for point in self.forecast.get('points', [])]
+                self.forecast['fields'] = [field for field in self.forecast.get('fields', []) if field != 'pv_power']
+                self.pv_status = {'message': 'Solcellsprognos väntar på hämtning.', 'sources': []}
+            if pv_entry and (self.pv_time is None or (now()-self.pv_time).total_seconds() >= 1800):
+                try:
+                    prefs, forecasts = energy_data()
+                    available = pv_sources(prefs, forecasts)
+                    if pv_entry not in [source['id'] for source in available]:
+                        raise ValueError('Vald Forecast.Solar-källa saknas i Energipanelens solprognoser.')
+                    power = pv_hourly(forecasts, pv_entry)
+                    if not power: raise ValueError('Forecast.Solar gav ingen giltig timprognos.')
+                    self.pv_power_hours = power
+                    self.pv_time = now()
+                    self.pv_status = {'message': 'Forecast.Solar hämtad från Energipanelen.', 'source': pv_entry,
+                                      'fetched_at': self.pv_time.isoformat(), 'hours': len(power)}
+                except Exception as error:
+                    self.pv_time = now()
+                    self.pv_power_hours = {}
+                    self.pv_status = {'message': str(error), 'source': pv_entry}
+                    self.forecast['points'] = [{k:v for k,v in point.items() if k != 'pv_power'} for point in self.forecast.get('points', [])]
+                    self.forecast['fields'] = [field for field in self.forecast.get('fields', []) if field != 'pv_power']
+            if not pv_entry:
+                self.pv_status = {'message': 'Ingen solcellsprognos vald.'}
+            if pv_entry and self.pv_power_hours:
+                self.forecast['points'] = combine_pv(self.forecast.get('points', []), self.pv_power_hours)
+                if any('pv_power' in point for point in self.forecast['points']) and 'pv_power' not in self.forecast.setdefault('fields', []):
+                    self.forecast['fields'].append('pv_power')
             stamp = now().isoformat()
-            snapshot = {'readings': items, 'forecast': self.forecast, 'target_sync':target_sync, 'sampled_at': stamp, 'error': None, 'logging': c['mode'] == 'shadow'}
+            snapshot = {'readings': items, 'forecast': self.forecast, 'pv_forecast': self.pv_status, 'target_sync':target_sync, 'sampled_at': stamp, 'error': None, 'logging': c['mode'] == 'shadow'}
             snapshot['pi'] = self.pi.step(c, items)
             required=set(c['indoor']+[c['outdoor']]+list(filter(None,[c['supply'],c['return']])))
             valid={r['entity'] for r in items if r['quality']=='OK' and r['value'] is not None}
@@ -227,13 +267,15 @@ class Collector:
             db.execute('DELETE FROM mpc_samples WHERE time < ?',((now()-timedelta(days=90)).isoformat(),))
             db.execute('CREATE TABLE IF NOT EXISTS mpc_forecasts (time TEXT PRIMARY KEY, entity TEXT NOT NULL, fetched_at TEXT NOT NULL, fields TEXT NOT NULL, forecast TEXT NOT NULL, plan TEXT NOT NULL, mapping TEXT NOT NULL)')
             if plan and forecast and config and forecast.get('entity') and forecast.get('fetched_at'):
-                mapping={'indoor':config['indoor'],'outdoor':config['outdoor'],'solar':config.get('solar',''),'cloud':config.get('cloud','')}
+                mapping={'indoor':config['indoor'],'outdoor':config['outdoor'],'solar':config.get('solar',''),'cloud':config.get('cloud',''),
+                         'pv_power':config.get('pv_power',''),'pv_forecast':config.get('pv_forecast',''),
+                         'pv_fetched_at':self.pv_status.get('fetched_at') if config.get('pv_forecast') else None}
                 trained = (result.get('report') or {}).get('mapping') or {}
                 if trained.get('cloud_auto'):
                     mapping['cloud'] = trained['cloud']
                     mapping['cloud_auto'] = True
                     mapping['weather'] = config.get('weather', '')
-                points=[{key:row[key] for key in ('datetime','temperature','solar_irradiance','cloud_coverage') if key in row}
+                points=[{key:row[key] for key in ('datetime','temperature','solar_irradiance','cloud_coverage','pv_power') if key in row}
                         for row in forecast.get('points',[])[:24]]
                 fields=sorted({key for row in points for key in row if key!='datetime'})
                 db.execute('INSERT OR REPLACE INTO mpc_forecasts VALUES (?,?,?,?,?,?,?)',

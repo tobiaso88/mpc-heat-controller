@@ -1,3 +1,8 @@
+# 0.15.0
+
+- Valbar växelriktarsensor i W/kW och valbar Forecast.Solar-källa från Home Assistants Energipanel. Matchad timprognos kan användas av en validerad solcellsmodell i MPC:s skuggläge.
+- Prognostiserad och uppmätt solcellsproduktion sparas för efterhandsjämförelse i högst 90 dagar. Aktiv styrning förblir PI.
+
 # 0.14.0
 
 - Läser och loggar automatiskt aktuell molntäckning från vald Home Assistant-väderentitet när den finns. En validerad molnmodell kan lära av rumstemperaturen utan separat solsensor; temperaturmodellen används som reserv.

@@ -58,5 +58,30 @@ class ShadowEvaluationTests(unittest.TestCase):
             with sqlite3.connect(data/'measurements.sqlite') as db:
                 self.assertEqual(db.execute('SELECT COUNT(*) FROM mpc_forecasts').fetchone()[0],0)
 
+    def test_archived_pv_forecast_compares_with_inverter_power(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data = Path(directory)
+            config = validate({'mode': 'shadow', 'indoor': ['sensor.room'], 'outdoor': 'sensor.out',
+                               'applied_signal': 'number.signal', 'weather': 'weather.x',
+                               'pv_power': 'sensor.pv', 'pv_forecast': 'a' * 32})
+            collector = Collector(lambda: config, data)
+            decision = datetime.now(timezone.utc) - timedelta(hours=40)
+            weather_time = decision + timedelta(hours=1)
+            indoor_time = weather_time + timedelta(hours=1)
+            collector.pv_status = {'fetched_at': decision.isoformat()}
+            readings = [{'entity': entity, 'value': value, 'quality': 'OK'} for entity, value in
+                        [('sensor.room', 21.5), ('sensor.out', 6), ('sensor.pv', 3200)]]
+            collector.store(weather_time.isoformat(), readings, config)
+            collector.store(indoor_time.isoformat(), readings, config)
+            forecast = {'entity': 'weather.x', 'fetched_at': decision.isoformat(),
+                        'points': [{'datetime': weather_time.isoformat(), 'temperature': 5, 'pv_power': 3000}]}
+            plan = [{'datetime': indoor_time.isoformat(), 'indoor': 21.4, 'signal': 4.5}]
+            collector.store_mpc(decision.isoformat(), {'state': 'ready', 'plan': plan}, forecast, config)
+            proposal = read(data)['proposals'][0]
+            self.assertEqual(proposal['pv_forecast_source'], 'a' * 32)
+            self.assertEqual(proposal['pv_forecast_fetched_at'], decision.isoformat())
+            self.assertEqual(proposal['pv_power_mae'], 200)
+            self.assertEqual(proposal['points'][0]['actual_pv_power'], 3200)
+
 
 if __name__=='__main__': unittest.main()

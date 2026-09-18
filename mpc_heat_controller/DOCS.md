@@ -1,4 +1,4 @@
-# MPC Heat Controller 0.14.0
+# MPC Heat Controller 0.15.0
 
 ## Grundläge och aktiv PI
 
@@ -81,6 +81,10 @@ Välj vid behov **Värmepumpens avlästa utetemperatur (valfri)** i Inställning
 ## Sol i skuggförslaget och modellgränser
 
 Appen läser faktisk `weather.get_forecasts`-respons för vald timväderentitet. `temperature` krävs. `cloud_coverage` (%) och det leverantörsspecifika `solar_irradiance` (W/m²) tas med endast när de finns och är giltiga. Gränssnittet visar tillgängliga fält och markerar avsaknad av solinstrålningsprognos. Home Assistants generella prognosformat dokumenterar `cloud_coverage`, men garanterar inte solinstrålning. Vald väderentitets verkliga stöd måste därför kontrolleras i appen; källan kan inte identifieras från denna kodbas.
+
+Om du redan har solpaneler kan du i installationsguiden välja växelriktarens **momentana solcellsproduktion** (W eller kW) och motsvarande **Forecast.Solar-källa**. Källan måste först kopplas till solproduktionen i Home Assistants Energipanel. Appen läser då Energipanelens timvärden (`energy/solar_forecast`, Wh per timme) och omvandlar dem till genomsnittlig effekt i W. En totalsensor i kWh eller nätets exporteffekt är inte rätt historiskt underlag. Saknade timmar fylls inte med uppskattningar; en nollpunkt vid lokal midnatt som Forecast.Solar utelämnar återställs bara om timmarna på båda sidor finns. Utan 24 matchande timvärden används den validerade temperaturmodellen i skuggläge om den klarat kvalitetskontrollen; annars visas inget MPC-förslag.
+
+Solcellsproduktionen är en indirekt solsignal: panelernas lutning, orientering, skuggning och växelriktarens begränsning kan skilja sig från husets solvärme. Solcellsmodellen kräver minst 250 kompletta historiska timmar, minst 24 testfönster vid 6/12/24 timmar, MAE högst 0,8 °C och minst 15 % bättre än temperaturpersistens. Den skalade effekten av produktionen måste vara positiv men högst 0,001 °C/h per W; felvänd eller orimlig solcellsmodell stoppas. Arkivet sparar den prognos som fanns vid beslutet och jämför senare med uppmätt produktion inom samma 90-dagars retention. Detta är utvärdering av skuggförslag, inte bevis för effekten av alternativa MPC-kommandon.
 
 Ingen separat solsensor krävs. Appen kan automatiskt logga aktuell molnighet från vald väderentitet och lära dess samband med uppmätt innetemperatur. Om både denna historik och 24 timmars molnprognos finns och modellen valideras används molnmodellen. Annars används den temperaturbaserade modellen. Den som redan har en W/m²-sensor eller en separat %-sensor kan fortfarande välja den manuellt; då måste motsvarande prognosfält finnas. Minst 250 kompletta timvärden krävs för varje modell.
 

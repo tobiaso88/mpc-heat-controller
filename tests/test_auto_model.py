@@ -124,6 +124,62 @@ class AutoModelTests(unittest.TestCase):
             self.assertEqual(saved['status']['state'],'collecting')
             self.assertIsNone(saved['report'])
 
+    def test_pv_selection_without_history_keeps_temperature_model(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data = Path(directory)
+            config, start = self.make_log(data)
+            config['pv_power'] = 'sensor.pv'
+            config['pv_forecast'] = 'a' * 32
+            with sqlite3.connect(data / 'measurements.sqlite') as db:
+                db.execute('UPDATE samples SET settings=?', (json.dumps(config),))
+            AutoModel(data).maybe_train(config, start + timedelta(days=30))
+            saved = model_store.load_auto(data)
+            self.assertEqual(saved['status']['state'], 'ready')
+            self.assertTrue(saved['report']['mapping']['pv_baseline'])
+
+    def test_pv_model_can_be_ready_when_temperature_baseline_is_poor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data = Path(directory)
+            config = validate({'mode': 'shadow', 'indoor': ['sensor.room'], 'outdoor': 'sensor.out',
+                               'applied_signal': 'number.signal', 'pv_power': 'sensor.pv',
+                               'pv_forecast': 'a' * 32})
+            start = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0) - timedelta(hours=399)
+            temperature = 21.0
+            with sqlite3.connect(data / 'measurements.sqlite') as db:
+                db.execute('CREATE TABLE samples (time TEXT PRIMARY KEY, readings TEXT, settings TEXT)')
+                for h in range(400):
+                    outside = 5 + 4 * math.sin(h / 19)
+                    signal = 3 + 3 * math.sin(h / 13)
+                    pv = max(0, math.sin((h % 24 - 6) * math.pi / 12)) * 5000 * (0.8 + 0.2 * math.sin(h / 7))
+                    rows = [{'entity': entity, 'value': value, 'quality': 'OK'} for entity, value in
+                            [('sensor.room', temperature), ('sensor.out', outside),
+                             ('number.signal', signal), ('sensor.pv', pv)]]
+                    db.execute('INSERT INTO samples VALUES (?,?,?)',
+                               ((start + timedelta(hours=h)).isoformat(), json.dumps(rows), json.dumps(config)))
+                    temperature += 0.5 + 0.025 * (outside - temperature) - 0.01 * signal + 0.0001 * pv
+            AutoModel(data).maybe_train(config, datetime.now(timezone.utc))
+            saved = model_store.load_auto(data)
+            self.assertEqual(saved['status']['state'], 'ready')
+            self.assertEqual(saved['report']['mapping']['pv_power'], 'sensor.pv')
+            self.assertTrue(quality(saved['report']))
+
+    def test_pv_forecast_needs_matching_history_and_suggests_less_heat(self):
+        config = validate({'pv_power': 'sensor.pv', 'pv_forecast': 'a' * 32})
+        model = {'name': 'linear', 'coefficients': [0, 0, 0, -0.05, 0.0001],
+                 'means': [0] * 5, 'scales': [1] * 5}
+        report = {'models': [model], 'mapping': {'pv_power': 'sensor.pv'}}
+        start = datetime.now(timezone.utc) + timedelta(hours=1)
+        base = [{'datetime': (start + timedelta(hours=h)).isoformat(),
+                 'temperature': 5, 'pv_power': 0} for h in range(24)]
+        sunny = [dict(row, pv_power=5000 if 4 <= h <= 10 else 0) for h, row in enumerate(base)]
+        output = {'state': 'confirmed', 'min': -15, 'max': 30, 'step': 0.5}
+        regular = live_plan(report, 21.5, 0, base, config, output)
+        pv = live_plan(report, 21.5, 0, sunny, config, output)
+        self.assertEqual(len(pv), 24)
+        self.assertGreater(pv[1]['signal'], regular[1]['signal'])
+        self.assertEqual(live_plan(report, 21.5, 0, [dict(row) for row in base[:12]], config, output), [])
+        self.assertEqual(live_plan(report, 21.5, 0, [{k:v for k,v in row.items() if k != 'pv_power'} for row in base], config, output), [])
+
     def test_quality_gate_rejects_poor_model(self):
         report={'metrics':[{'hours':h,'windows':30,'mae':1.0,'baseline_mae':0.5} for h in (6,12,24)]}
         self.assertFalse(quality(report))
@@ -138,6 +194,17 @@ class AutoModelTests(unittest.TestCase):
         model['coefficients'][3]=0.04
         self.assertFalse(quality(report))
         model['coefficients'][3]=-2.0
+        self.assertFalse(quality(report))
+
+    def test_pv_model_requires_plausible_positive_gain(self):
+        metrics = [{'hours': h, 'windows': 30, 'mae': 0.2, 'baseline_mae': 1.0} for h in (6, 12, 24)]
+        model = {'name': 'linear', 'coefficients': [0, 0, 0, -0.04, 0.04],
+                 'means': [0] * 5, 'scales': [1, 1, 1, 2, 1000]}
+        report = {'models': [model], 'metrics': metrics, 'mapping': {'pv_power': 'sensor.pv'}}
+        self.assertTrue(quality(report))
+        model['coefficients'][4] = -0.04
+        self.assertFalse(quality(report))
+        model['coefficients'][4] = 10
         self.assertFalse(quality(report))
 
     def test_solar_forecast_requires_historical_feature_and_full_day(self):

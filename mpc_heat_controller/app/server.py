@@ -18,6 +18,7 @@ from .model import evaluate
 from . import model_store
 from .trends import read as read_trends
 from .shadow_evaluation import read as read_shadow_evaluation
+from .pv_forecast import energy_data, sources as pv_sources
 
 DATA = Path(os.environ.get("MPC_DATA", "./data"))
 STATIC = Path(__file__).parent / "static"
@@ -120,6 +121,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, {'time_zone': zone})
             if path == "/api/config": return self.reply(200, config())
             if path == "/api/entities": return self.reply(200, ha_states())
+            if path == "/api/pv-sources":
+                try:
+                    prefs, forecasts = energy_data()
+                    return self.reply(200, {'sources': pv_sources(prefs, forecasts), 'message': 'Välj prognosen som hör till dina solpaneler.'})
+                except Exception:
+                    return self.reply(200, {'sources': [], 'message': 'Ingen timprognos hittades. Koppla Forecast.Solar till solproduktionen i Home Assistants Energipanel.'})
             if path == '/api/trends':return self.reply(200,read_trends(DATA.resolve()))
             if path == '/api/mpc/evaluation':
                 params=parse_qs(urlsplit(self.path).query)

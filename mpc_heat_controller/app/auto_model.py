@@ -15,17 +15,22 @@ CHECK_INTERVAL = timedelta(hours=1)
 TRAIN_INTERVAL = timedelta(hours=24)
 
 
-def mapping_for(config, auto_cloud=False):
+def mapping_for(config, auto_cloud=False, pv_baseline=False):
     mapping = {'indoor': sorted(config.get('indoor', [])),
                'outdoor': config.get('outdoor', ''),
-               'signal': config.get('applied_signal', ''), 'solar': config.get('solar', ''), 'cloud': config.get('cloud', '')}
-    if auto_cloud and not mapping['solar'] and not mapping['cloud'] and config.get('weather'):
+               'signal': config.get('applied_signal', ''), 'solar': config.get('solar', ''), 'cloud': config.get('cloud', ''),
+               'pv_power': '' if pv_baseline else config.get('pv_power', ''),
+               'pv_forecast': config.get('pv_forecast', '')}
+    if pv_baseline:
+        mapping['pv_baseline'] = True
+        mapping['pv_selected'] = config.get('pv_power', '')
+    if auto_cloud and not config.get('pv_power') and not mapping['solar'] and not mapping['cloud'] and config.get('weather'):
         mapping['cloud'] = config['weather'] + '#cloud_coverage'
         mapping['cloud_auto'] = True
     if not mapping['indoor'] or not mapping['outdoor'] or not mapping['signal']:
         return None
-    if mapping['solar'] and mapping['cloud']: return None
-    selected = mapping['indoor'] + [mapping['outdoor'], mapping['signal']] + list(filter(None, [mapping['solar'], mapping['cloud']]))
+    if sum(bool(mapping[k]) for k in ('solar', 'cloud', 'pv_power')) > 1: return None
+    selected = mapping['indoor'] + [mapping['outdoor'], mapping['signal']] + list(filter(None, [mapping['solar'], mapping['cloud'], mapping['pv_power']]))
     if len(set(selected)) != len(selected):
         return None
     return mapping
@@ -38,7 +43,7 @@ def local_points(data, mapping):
         return {}, {'samples': 0, 'incomplete_hours': 0, 'excluded_samples': 0}
     with closing(sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)) as db:
         rows = db.execute('SELECT time, readings, settings FROM samples ORDER BY time').fetchall()
-    wanted = mapping['indoor'] + [mapping['outdoor'], mapping['signal']] + ([mapping['solar']] if mapping.get('solar') else [mapping['cloud']] if mapping.get('cloud') else [])
+    wanted = mapping['indoor'] + [mapping['outdoor'], mapping['signal']] + ([mapping['solar']] if mapping.get('solar') else [mapping['cloud']] if mapping.get('cloud') else [mapping['pv_power']] if mapping.get('pv_power') else [])
     buckets = defaultdict(lambda: defaultdict(list))
     excluded = 0
     for stamp, raw_readings, raw_settings in rows:
@@ -48,6 +53,8 @@ def local_points(data, mapping):
                     settings.get('outdoor') != mapping['outdoor'] or
                     settings.get('applied_signal') != mapping['signal'] or settings.get('solar', '') != mapping.get('solar', '') or
                     settings.get('cloud', '') != ('' if mapping.get('cloud_auto') else mapping.get('cloud', '')) or
+                    settings.get('pv_power', '') != mapping.get('pv_selected', mapping.get('pv_power', '')) or
+                    settings.get('pv_forecast', '') != mapping.get('pv_forecast', '') or
                     mapping.get('cloud_auto') and settings.get('weather') + '#cloud_coverage' != mapping['cloud']):
                 excluded += 1
                 continue
@@ -69,7 +76,7 @@ def local_points(data, mapping):
         if all(entities.get(entity) for entity in wanted):
             mean = lambda entity: sum(entities[entity]) / len(entities[entity])
             points[hour] = (sum(mean(entity) for entity in mapping['indoor']) / len(mapping['indoor']),
-                            mean(mapping['outdoor']), mean(mapping['signal'])) + ((mean(mapping['solar']),) if mapping.get('solar') else (mean(mapping['cloud']),) if mapping.get('cloud') else ())
+                            mean(mapping['outdoor']), mean(mapping['signal'])) + ((mean(mapping['solar']),) if mapping.get('solar') else (mean(mapping['cloud']),) if mapping.get('cloud') else (mean(mapping['pv_power']),) if mapping.get('pv_power') else ())
     return points, {'samples': len(rows), 'incomplete_hours': len(buckets) - len(points),
                     'excluded_samples': excluded}
 
@@ -102,7 +109,7 @@ def live_plan(report, indoor, applied, forecast, config, output=None):
         model = next(m for m in report['models'] if m['name'] == 'linear')
         solar = bool(report.get('mapping', {}).get('solar'))
         cloud = bool(report.get('mapping', {}).get('cloud'))
-        field = 'solar_irradiance' if solar else 'cloud_coverage' if cloud else None
+        field = 'solar_irradiance' if solar else 'cloud_coverage' if cloud else 'pv_power' if report.get('mapping', {}).get('pv_power') else None
         if field and any(field not in row for row in day): return []
         lo=max(float(output['min']),float(config['signal_min']))
         hi=min(float(output['max']),float(config['signal_max']))
@@ -148,6 +155,14 @@ def quality(report):
     effect = signal_effect(report)
     if effect is None or not -0.5 <= effect <= -0.001:
         return False
+    if report.get('mapping', {}).get('pv_power'):
+        try:
+            model = next(m for m in report['models'] if m['name'] == 'linear')
+            pv_effect = float(model['coefficients'][4]) / float(model['scales'][4])
+            if not math.isfinite(pv_effect) or not 0 < pv_effect <= 0.001:
+                return False
+        except (KeyError, IndexError, TypeError, ValueError, ZeroDivisionError, StopIteration):
+            return False
     metrics={m['hours']:m for m in report['metrics']}
     for h in (6,12,24):
         m=metrics[h]
@@ -171,6 +186,8 @@ class AutoModel:
             current_mapping = mapping_for(config)
             if saved and saved.get('report') and saved['report'].get('mapping', {}).get('cloud_auto'):
                 current_mapping = mapping_for(config, auto_cloud=True)
+            if saved and saved.get('report') and saved['report'].get('mapping', {}).get('pv_baseline'):
+                current_mapping = mapping_for(config, pv_baseline=True)
             same_model = bool(saved and saved.get('report') and saved['report'].get('mapping') == current_mapping)
             interval = TRAIN_INTERVAL if same_model else CHECK_INTERVAL
             if self.last_check and clock-self.last_check < interval:
@@ -184,7 +201,7 @@ class AutoModel:
                 except (KeyError, TypeError, ValueError):
                     pass
             self.last_check = clock
-            mapping = mapping_for(config)
+            mapping = mapping_for(config, pv_baseline=bool(config.get('pv_power')))
             if config.get('mode') != 'shadow' or not mapping:
                 model_store.save_auto_status(self.data, {
                     'state': 'waiting', 'message': 'Välj skuggläge, rumsgivare, utegivare och Ohmigos inställda värde för automatisk träning.',
@@ -198,8 +215,17 @@ class AutoModel:
                 model_store.save_auto_status(self.data, status)
                 return
             try:
-                report = evaluate_points(points, mapping, incomplete_hours=info['incomplete_hours'], source='local_log')
-                if not quality(report): raise ValueError('Modellkvaliteten räcker inte: styrsignalens skalade effekt måste vara mellan −0,5 och −0,001 °C/h per °C; 6, 12 och 24 h kräver minst 24 fönster, MAE ≤0,8 °C och minst 15 % lägre MAE än temperaturpersistens.')
+                try:
+                    report = evaluate_points(points, mapping, incomplete_hours=info['incomplete_hours'], source='local_log')
+                except ValueError:
+                    if not config.get('pv_power'):
+                        raise
+                    report = None
+                if not quality(report):
+                    if config.get('pv_power'):
+                        report = None
+                    else:
+                        raise ValueError('Modellkvaliteten räcker inte: styrsignalens skalade effekt måste vara mellan −0,5 och −0,001 °C/h per °C; 6, 12 och 24 h kräver minst 24 fönster, MAE ≤0,8 °C och minst 15 % lägre MAE än temperaturpersistens.')
                 automatic = mapping_for(config, auto_cloud=True)
                 if automatic and automatic.get('cloud_auto'):
                     cloud_points, cloud_info = local_points(self.data, automatic)
@@ -214,8 +240,34 @@ class AutoModel:
                                 status['mapping'] = automatic
                         except ValueError:
                             pass
+                pv_reason = ''
+                if config.get('pv_power'):
+                    pv_mapping = mapping_for(config)
+                    pv_points, pv_info = local_points(self.data, pv_mapping)
+                    if len(pv_points) >= MIN_COMPLETE_HOURS and max(pv_points) >= clock-timedelta(hours=2):
+                        try:
+                            pv_report = evaluate_points(pv_points, pv_mapping,
+                                incomplete_hours=pv_info['incomplete_hours'], source='local_log')
+                            if quality(pv_report):
+                                if report:
+                                    pv_report['fallback'] = report
+                                report = pv_report
+                                status['complete_hours'] = len(pv_points)
+                                status['mapping'] = pv_mapping
+                            else:
+                                pv_reason = ' Solcellsmodellen klarade ännu inte kvalitetskontrollen; temperaturmodellen används.'
+                        except ValueError:
+                            pv_reason = ' Solcellsmodellen kunde inte valideras; temperaturmodellen används.'
+                    else:
+                        pv_reason = f' Solcellsmodellen samlar giltig produktionshistorik: {len(pv_points)} av minst {MIN_COMPLETE_HOURS} timmar; temperaturmodellen används.'
+                if report is None:
+                    raise ValueError('Varken temperaturmodellen eller solcellsmodellen klarade kvalitetskontrollen. ' + pv_reason.strip())
                 status.update({'state': 'ready', 'message': ('Molnmodell tränad från rumstemperatur och väderentitetens aktuella molnighet; utetemperaturmodell finns som reserv.'
-                                                          if report.get('mapping', {}).get('cloud_auto') else 'Automatisk temperaturmodell tränad och validerad från appens mätlogg.'),
+                                                          if report.get('mapping', {}).get('cloud_auto') else
+                                                          ('Solcellsmodell tränad från uppmätt produktion; utetemperaturmodell finns som reserv.'
+                                                           if report.get('fallback') else 'Solcellsmodell tränad från uppmätt produktion; ingen validerad temperaturmodell som reserv.')
+                                                          if report.get('mapping', {}).get('pv_power') else
+                                                          'Automatisk temperaturmodell tränad och validerad från appens mätlogg.') + pv_reason,
                                'trained_at': clock.isoformat()})
                 model_store.save_auto(self.data, report, status)
             except ValueError as error:
@@ -230,7 +282,8 @@ class AutoModel:
             return {'state': 'waiting', 'message': 'Väntar på första kontrollen av mätloggen.', 'plan': []}
         status = saved.get('status') or {}
         report = saved.get('report')
-        mapping = mapping_for(config, auto_cloud=bool(report and report.get('mapping', {}).get('cloud_auto')))
+        mapping = mapping_for(config, auto_cloud=bool(report and report.get('mapping', {}).get('cloud_auto')),
+                              pv_baseline=bool(report and report.get('mapping', {}).get('pv_baseline')))
         if report and report.get('mapping') != mapping:
             return dict(status, state='collecting', message='Givarvalet har ändrats. Samlar en ny sammanhängande träningsperiod.', plan=[])
         values = {r['entity']: r.get('value') for r in readings
@@ -268,6 +321,6 @@ class AutoModel:
         elif report and status.get('state') == 'ready' and not plan:
             message += ' Liveförslag väntar på färsk, bekräftad number-utgång, giltiga mätvärden och 24 timmars matchande väderprognos.'
         elif plan:
-            message += (' Molnprognos saknas; utetemperaturmodellen används.' if fallback_used else '')
+            message += (' Sol- eller molnprognos saknas; utetemperaturmodellen används.' if fallback_used else '')
             message += ' MPC-förslaget är endast skuggläge och skickas inte.'
         return dict(status, report=report, plan=plan, message=message)

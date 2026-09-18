@@ -2,6 +2,10 @@
 
 Home Assistant-app för komfortvärme med eget webbgränssnitt, PI och experimentell modellutvärdering. Mål: HA OS 2026.9.1, Raspberry Pi 4 aarch64, 8 GB.
 
+## Version 0.15.0
+
+- Har du solpaneler kan du välja växelriktarens momentana produktion i W/kW och den Forecast.Solar-källa som är kopplad till anläggningen i Home Assistants Energipanel. En validerad solcellsmodell använder timprognosen i skuggläget; en separat validerad temperaturmodell används som reserv när den finns.
+
 ## Version 0.14.0
 
 - Mobilanpassat gränssnitt med vädergraf och historiska temperatur-/reglergrafer.
@@ -21,7 +25,7 @@ Lägg till https://github.com/tobiaso88/mpc-heat-controller under Inställningar
 
 ## Lokal utveckling
 
-Python 3.11 eller senare, inga tredjepartsberoenden:
+Python 3.11 eller senare. `websocket-client` behövs bara för att läsa Forecast.Solar från Home Assistant; Dockerbygget installerar det automatiskt:
 
 ```sh
 cd mpc_heat_controller
