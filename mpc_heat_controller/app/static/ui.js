@@ -19,9 +19,12 @@ const solarHeading=document.createElement('h3');solarHeading.textContent='Solins
 const solarGraph=document.createElement('div');solarGraph.className='trend-graph';
 const pvHeading=document.createElement('h3');pvHeading.textContent='Solcellsproduktion (W) · prognos';
 const pvGraph=document.createElement('div');pvGraph.className='trend-graph';
+const pvActualHeading=document.createElement('h3');pvActualHeading.textContent='Uppmätt solcellsproduktion (W) · senaste 48 timmarna';
+const pvActualStatus=document.createElement('p');pvActualStatus.setAttribute('role','status');
+const pvActualGraph=document.createElement('div');pvActualGraph.className='trend-graph';
 weatherGraph.before(document.createElement('h3'));
 weatherGraph.previousSibling.textContent='Utomhustemperatur (°C) · prognos';
-weatherGraph.after(cloudHeading,cloudGraph,solarHeading,solarGraph,pvHeading,pvGraph);
+weatherGraph.after(cloudHeading,cloudGraph,solarHeading,solarGraph,pvHeading,pvGraph,pvActualHeading,pvActualStatus,pvActualGraph);
 fold([weatherCard.querySelector('.table-wrap')],'Visa timprognos');
 const historyCard=document.createElement('article');historyCard.className='chart-card';
 historyCard.innerHTML='<h2>Temperatur och reglering</h2><p id="trends-status">Läser mätloggen…</p><h3>Inomhus och komfortmål</h3><div id="indoor-trend" class="trend-graph"></div><h3>Utetemperatur och styrning</h3><p>Ohmigo visar inställt värde. PI- och MPC-förslagen är beräknade och behöver inte vara skickade.</p><div id="control-trend" class="trend-graph"></div>';
@@ -45,12 +48,16 @@ function plot(host,points,series,title,maxGap,options={}){
 const originalTelemetry=telemetry;
 telemetry=async function(){await originalTelemetry();try{
     const t=await api('telemetry');const points=(t.forecast?.points||[]).filter(p=>Date.parse(p.datetime)<=Date.now()+24*3600000);
+    const actual=(t.readings||[]).find(r=>r.entity===settings?.pv_power);
+    pvActualStatus.textContent=!settings?.pv_power?'Ingen produktionssensor vald i inställningarna.':actual?.quality==='OK'&&typeof actual.value==='number'?`Senast uppmätt: ${(actual.value/1000).toFixed(2)} kW (${actual.value.toFixed(0)} W) · ${localTime(actual.reported_at)}`:`Uppmätt produktion saknas: ${actual?.quality||'givaren har inte lämnat något värde'}.`;
     plot(weatherGraph,points,[{key:'temperature',label:'Utomhustemperatur',color:'#146b88'}],'Utomhustemperatur kommande 24 timmar',5400000,{empty:'Ingen giltig timprognos för temperatur.'});
     plot(cloudGraph,points,[{key:'cloud_coverage',label:'Molntäckning',color:'#7a5a9e'}],'Molntäckning kommande 24 timmar',5400000,{unit:'%',range:[0,100],empty:'Molnprognos saknas hos vald väderentitet.'});
     plot(solarGraph,points,[{key:'solar_irradiance',label:'Solinstrålning',color:'#b47a19'}],'Solinstrålning kommande 24 timmar',5400000,{unit:'W/m²',min:0,empty:'Prognos för solinstrålning saknas hos vald väderentitet.'});
-    plot(pvGraph,points,[{key:'pv_power',label:'Prognostiserad produktion',color:'#c17b16'}],'Solcellsproduktion kommande 24 timmar',5400000,{unit:'W',min:0,empty:'Välj en Forecast.Solar-källa i inställningarna för att visa timprognosen.'});
+    const pvPoints=(t.pv_forecast?.points||[]).filter(p=>Date.parse(p.datetime)<=Date.now()+24*3600000);
+    const pvEmpty=!settings?.pv_forecast?'Välj en Forecast.Solar-källa i inställningarna.':t.pv_forecast?.fetched_at?'Solcellsprognosen hämtades, men saknar timvärden för kommande 24 timmar.':t.pv_forecast?.message||'Ingen timprognos tillgänglig.';
+    plot(pvGraph,pvPoints,[{key:'pv_power',label:'Prognostiserad produktion',color:'#c17b16'}],'Solcellsproduktion kommande 24 timmar',5400000,{unit:'W',min:0,empty:pvEmpty});
 }catch(e){for(const graph of [weatherGraph,cloudGraph,solarGraph,pvGraph])graph.textContent='Vädergrafen kunde inte hämtas.'}};
-async function loadTrends(){try{await timeZoneReady;const r=await api('trends');$('trends-status').textContent=r.message;plot($('indoor-trend'),r.points,[{key:'indoor',label:'Inomhus',color:'#146b88'},{key:'target',label:'Börvärde',color:'#956211',dash:true}],'Inomhustemperatur och börvärde',1200000);plot($('control-trend'),r.points,[{key:'outdoor',label:'Verklig utetemperatur',color:'#527482'},{key:'applied',label:'Ohmigo inställt',color:'#146b88'},{key:'pump_outdoor',label:'Värmepump avläst',color:'#b45d24'},{key:'proposal',label:'PI-förslag',color:'#97547e',dash:true},{key:'mpc_proposal',label:'MPC-förslag',color:'#27835f',dash:true}],'Utetemperatur och reglering',1200000)}catch(e){$('trends-status').textContent='Kunde inte läsa mätloggen.'}}
+async function loadTrends(){try{await timeZoneReady;const r=await api('trends');$('trends-status').textContent=r.message;plot($('indoor-trend'),r.points,[{key:'indoor',label:'Inomhus',color:'#146b88'},{key:'target',label:'Börvärde',color:'#956211',dash:true}],'Inomhustemperatur och börvärde',1200000);plot($('control-trend'),r.points,[{key:'outdoor',label:'Verklig utetemperatur',color:'#527482'},{key:'applied',label:'Ohmigo inställt',color:'#146b88'},{key:'pump_outdoor',label:'Värmepump avläst',color:'#b45d24'},{key:'proposal',label:'PI-förslag',color:'#97547e',dash:true},{key:'mpc_proposal',label:'MPC-förslag',color:'#27835f',dash:true}],'Utetemperatur och reglering',1200000);plot(pvActualGraph,r.points,[{key:'pv_power',label:'Uppmätt produktion',color:'#1a7870'}],'Uppmätt solcellsproduktion senaste 48 timmarna',1200000,{unit:'W',min:0,empty:settings?.pv_power?'Ingen giltig solcellsproduktion har loggats ännu. Loggning sker i skuggläge.':'Välj växelriktarens momentana produktion i inställningarna.'})}catch(e){$('trends-status').textContent='Kunde inte läsa mätloggen.';pvActualGraph.textContent='Kunde inte läsa uppmätt solcellsproduktion.'}}
 loadTrends();setInterval(loadTrends,60000);
 const stepNames=['Givare','Komfort & styrning','Granska'];
 const originalSetStep=setStep;

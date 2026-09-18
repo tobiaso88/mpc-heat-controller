@@ -205,7 +205,10 @@ class Collector:
                     self.pv_power_hours = power
                     self.pv_time = now()
                     self.pv_status = {'message': 'Forecast.Solar hämtad från Energipanelen.', 'source': pv_entry,
-                                      'fetched_at': self.pv_time.isoformat(), 'hours': len(power)}
+                                      'fetched_at': self.pv_time.isoformat(), 'hours': len(power),
+                                      'points': [{'datetime': hour.isoformat(), 'pv_power': value}
+                                                 for hour, value in sorted(power.items())
+                                                 if self.pv_time.replace(minute=0, second=0, microsecond=0) <= hour <= self.pv_time + timedelta(hours=48)]}
                 except Exception as error:
                     self.pv_time = now()
                     self.pv_power_hours = {}

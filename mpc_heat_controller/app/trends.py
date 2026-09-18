@@ -27,8 +27,9 @@ def read(data):
             buckets[int(time//600)]={'datetime':stamp,'indoor':inside,'target':c.get('target'),
                 'outdoor':values.get(c.get('outdoor')),'applied':values.get(c.get('applied_signal')),
                 'pump_outdoor':values.get(c.get('pump_outdoor')),
+                'pv_power':values.get(c.get('pv_power')),
                 'proposal':(regulator or {}).get('signal'),
                 'mpc_proposal':mpc_result.get('signal',mpc_plan[0].get('signal') if mpc_plan else None),
-                'group':json.dumps([ids,c.get('outdoor'),c.get('applied_signal'),c.get('pump_outdoor')])}
+                'group':json.dumps([ids,c.get('outdoor'),c.get('applied_signal'),c.get('pump_outdoor'),c.get('pv_power')])}
         except (ValueError,KeyError,TypeError):continue
     return {'points':list(buckets.values()),'message':'Senaste 48 timmarna · sista loggade värdet per 10 minuter. Luckor och ändrade givarval bryter linjerna.'}

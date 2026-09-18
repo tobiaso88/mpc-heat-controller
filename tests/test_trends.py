@@ -24,3 +24,15 @@ class TrendTests(unittest.TestCase):
             point=read(p)['points'][0]
             self.assertIsNone(point['indoor']);self.assertEqual(point['applied'],5);self.assertEqual(point['target'],21.5)
             self.assertEqual(point['mpc_proposal'],4.5)
+
+    def test_actual_pv_power_uses_only_valid_selected_sensor(self):
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d)
+            c={'indoor':[],'pv_power':'sensor.pv'}
+            items=[{'entity':'sensor.pv','value':4837,'quality':'OK'},
+                   {'entity':'sensor.other','value':9000,'quality':'OK'}]
+            with sqlite3.connect(p/'measurements.sqlite') as db:
+                db.execute('CREATE TABLE samples (time TEXT,readings TEXT,settings TEXT)')
+                db.execute('INSERT INTO samples VALUES (?,?,?)',
+                           (datetime.now(timezone.utc).isoformat(),json.dumps(items),json.dumps(c)))
+            self.assertEqual(read(p)['points'][0]['pv_power'],4837)

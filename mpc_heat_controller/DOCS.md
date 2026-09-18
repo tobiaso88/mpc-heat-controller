@@ -1,4 +1,4 @@
-# MPC Heat Controller 0.15.2
+# MPC Heat Controller 0.15.3
 
 ## Grundläge och aktiv PI
 

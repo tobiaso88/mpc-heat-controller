@@ -1,17 +1,33 @@
 import json
 import sys
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.core import validate
 from app.pv_forecast import combine, energy_data, hourly, sources
-from app.telemetry import readings
+from app.telemetry import Collector, readings
 from app.server import pv_source_options
 
 
 class PVForecastTests(unittest.TestCase):
+    def test_pv_graph_hours_are_available_without_weather_forecast(self):
+        entry = 'a' * 32
+        stamp = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        prefs = {'energy_sources': [{'type': 'solar', 'config_entry_solar_forecast': [entry]}]}
+        forecast = {entry: {'wh_hours': {stamp.isoformat(): 1200}}}
+        config = validate({'pv_power': 'sensor.inverter', 'pv_forecast': entry})
+        with tempfile.TemporaryDirectory() as folder, patch('app.telemetry.request', return_value=[]), \
+                patch('app.telemetry.energy_data', return_value=(prefs, forecast)):
+            collector = Collector(lambda: config, Path(folder))
+            collector.cycle()
+            snapshot = collector.get()
+        self.assertEqual(snapshot['forecast']['points'], [])
+        self.assertEqual(snapshot['pv_forecast']['points'][0]['pv_power'], 1200)
+
     def test_selected_inverter_kw_is_logged_as_watts(self):
         config = validate({'pv_power': 'sensor.inverter', 'pv_forecast': 'a' * 32})
         states = [{'entity_id': 'sensor.inverter', 'state': '3.2',

@@ -1,3 +1,9 @@
+# 0.15.3
+
+- Visar senast uppmätt solcellsproduktion och de senaste 48 timmarnas produktion i väderöversikten.
+- Visar Forecast.Solars egna timvärden i grafen även utan matchande väderprognos, och förklarar när vald källa inte lämnar timvärden.
+- MPC i skuggläge och aktiv PI-styrning är oförändrade.
+
 # 0.15.2
 
 - Rättar sparning av Forecast.Solar-källor med Home Assistants alfanumeriska ID. Tidigare avvisades ett giltigt ID som bara innehöll andra tecken än små hexsiffror.
