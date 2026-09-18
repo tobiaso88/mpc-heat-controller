@@ -2,6 +2,10 @@
 
 Home Assistant-app för komfortvärme med eget webbgränssnitt, PI och experimentell modellutvärdering. Mål: HA OS 2026.9.1, Raspberry Pi 4 aarch64, 8 GB.
 
+## Version 0.15.2
+
+- Forecast.Solar-val med Home Assistants alfanumeriska käll-ID kan nu sparas i appen.
+
 ## Version 0.15.1
 
 - Installerade Forecast.Solar-källor kan väljas direkt i appen. Timprognosen blir tillgänglig när källan är kopplad till solproduktionen i Home Assistants Energipanel. Listan kan uppdateras i inställningarna.

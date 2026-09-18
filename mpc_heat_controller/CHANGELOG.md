@@ -1,3 +1,8 @@
+# 0.15.2
+
+- Rättar sparning av Forecast.Solar-källor med Home Assistants alfanumeriska ID. Tidigare avvisades ett giltigt ID som bara innehöll andra tecken än små hexsiffror.
+- Valet kan sparas även innan källan kopplats i Energipanelen; MPC använder fortfarande ingen solcellsprognos förrän timvärden finns. PI är oförändrad.
+
 # 0.15.1
 
 - Forecast.Solar-listan visar installerade källor även innan de kopplats till Energipanelen. Appen förklarar när timprognos saknas och kan uppdatera listan utan omladdning.

@@ -34,6 +34,22 @@ class Tests(unittest.TestCase):
                 server.DATA=Path(d); server.save({"target":21.7}); self.assertEqual(server.config()["target"],21.7)
             finally: server.DATA=original
 
+    def test_saves_home_assistant_forecast_entry_id(self):
+        entry = '01M2SPOSV2ECFGS9R189RJX85B'
+        config = {'pv_power': 'sensor.sigen_plant_pv_power_2', 'pv_forecast': entry}
+        original = server.DATA
+        with tempfile.TemporaryDirectory() as directory:
+            try:
+                server.DATA = Path(directory)
+                server.save(config)
+                self.assertEqual(server.config()['pv_forecast'], entry)
+                self.assertEqual(server.config()['pv_power'], config['pv_power'])
+            finally:
+                server.DATA = original
+        for bad in ('bad id', '../forecast', 'a' * 65):
+            with self.assertRaises(ValueError):
+                validate({'pv_power': config['pv_power'], 'pv_forecast': bad})
+
     def test_missing_live_data_never_plans(self):
         c=validate({"mode":"shadow","indoor":["sensor.room"],"outdoor":"sensor.outside"})
         s=server.status(c,{"entities":[]})

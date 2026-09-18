@@ -1,6 +1,7 @@
 """Configuration and explicitly uncalibrated thermal simulation. No actuation."""
 import copy
 import math
+import re
 
 DEFAULT = {"mode": "demo", "target": 21.5, "comfort_min": 21.0, "comfort_max": 22.0,
            "indoor": [], "outdoor": "", "supply": "", "return": "", "observe": [],
@@ -48,8 +49,8 @@ def validate(raw):
         raise ValueError('Välj både uppmätt solcellsproduktion och dess prognoskälla')
     if c['pv_power'] and not c['pv_power'].startswith('sensor.'):
         raise ValueError('Välj en sensor för momentan solcellsproduktion (W eller kW)')
-    if c['pv_forecast'] and (len(c['pv_forecast']) > 64 or not all(x in '0123456789abcdef' for x in c['pv_forecast'])):
-        raise ValueError('Välj en Forecast.Solar-källa från Energipanelen')
+    if c['pv_forecast'] and not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', c['pv_forecast']):
+        raise ValueError('Välj en giltig Forecast.Solar-källa')
     if c['cloud'] and not c['cloud'].startswith('sensor.'):
         raise ValueError('Välj en sensor för historisk molnighet (%)')
     if c['solar'] and not c['solar'].startswith('sensor.'):
