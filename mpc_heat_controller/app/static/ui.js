@@ -13,27 +13,40 @@ fold([chartCard],'Inomhusprognos · experimentell modell');
 const weatherCard=$('weather-status').closest('article');
 weatherCard.classList.add('weather-card');
 const weatherGraph=document.createElement('div');weatherGraph.className='trend-graph';weatherCard.querySelector('.table-wrap').before(weatherGraph);
+const cloudHeading=document.createElement('h3');cloudHeading.textContent='Molntäckning (%) · prognos';
+const cloudGraph=document.createElement('div');cloudGraph.className='trend-graph';
+const solarHeading=document.createElement('h3');solarHeading.textContent='Solinstrålning (W/m²) · prognos';
+const solarGraph=document.createElement('div');solarGraph.className='trend-graph';
+weatherGraph.before(document.createElement('h3'));
+weatherGraph.previousSibling.textContent='Utomhustemperatur (°C) · prognos';
+weatherGraph.after(cloudHeading,cloudGraph,solarHeading,solarGraph);
 fold([weatherCard.querySelector('.table-wrap')],'Visa timprognos');
 const historyCard=document.createElement('article');historyCard.className='chart-card';
 historyCard.innerHTML='<h2>Temperatur och reglering</h2><p id="trends-status">Läser mätloggen…</p><h3>Inomhus och komfortmål</h3><div id="indoor-trend" class="trend-graph"></div><h3>Utetemperatur och styrning</h3><p>Ohmigo visar inställt värde. PI- och MPC-förslagen är beräknade och behöver inte vara skickade.</p><div id="control-trend" class="trend-graph"></div>';
 piCard.after(historyCard);
-function plot(host,points,series,title,maxGap){
+function plot(host,points,series,title,maxGap,options={}){
     host.replaceChildren();
     const available=points.flatMap(p=>series.map(s=>p[s.key]).filter(v=>typeof v==='number'&&Number.isFinite(v)));
-    if(!available.length){const p=document.createElement('p');p.textContent='Inga mätvärden att visa ännu.';host.append(p);return}
+    if(!available.length){const p=document.createElement('p');p.textContent=options.empty||'Inga mätvärden att visa ännu.';host.append(p);return}
     const times=points.map(p=>Date.parse(p.datetime));const first=Math.min(...times),last=Math.max(...times);
-    const min=Math.floor(Math.min(...available)-.5),max=Math.ceil(Math.max(...available)+.5);
+    const min=options.range?.[0]??options.min??Math.floor(Math.min(...available)-.5),max=options.range?.[1]??Math.ceil(Math.max(...available)+.5);
+    const unit=options.unit||'°C';
     const x=t=>58+((t-first)/Math.max(last-first,3600000))*790,y=v=>225-(v-min)/Math.max(1,max-min)*195;
     const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 880 280');svg.setAttribute('role','img');svg.setAttribute('aria-label',title);
     function node(tag,attrs,text){const e=document.createElementNS(svg.namespaceURI,tag);for(const [key,value] of Object.entries(attrs))e.setAttribute(key,value);if(text)e.textContent=text;svg.append(e);return e}
-    for(let i=0;i<5;i++){const v=min+(max-min)*i/4;node('line',{x1:58,x2:848,y1:y(v),y2:y(v),stroke:'#d8e2e8'});node('text',{x:4,y:y(v)+5,fill:'#526974','font-size':14},v.toFixed(1)+'°')}
+    for(let i=0;i<5;i++){const v=min+(max-min)*i/4;node('line',{x1:58,x2:848,y1:y(v),y2:y(v),stroke:'#d8e2e8'});node('text',{x:4,y:y(v)+5,fill:'#526974','font-size':14},(options.range?v.toFixed(0):v.toFixed(1))+(unit==='°C'?'°':unit==='%'?'%':''))}
     for(let i=0;i<4;i++){const t=first+(last-first)*i/3;node('text',{x:x(t),y:259,'text-anchor':i===0?'start':i===3?'end':'middle',fill:'#526974','font-size':14},localTime(t,{day:'numeric',month:'numeric',hour:'2-digit',minute:'2-digit'}))}
-    for(const s of series){let previous=null;for(const p of points){const v=p[s.key],t=Date.parse(p.datetime);if(typeof v!=='number'||!Number.isFinite(v)){previous=null;continue}if(previous&&t-previous.t<=maxGap&&previous.group===p.group)node('line',{x1:x(previous.t),y1:y(previous.v),x2:x(t),y2:y(v),stroke:s.color,'stroke-width':2.5,...(s.dash?{'stroke-dasharray':'6 4'}:{})});const dot=node('circle',{cx:x(t),cy:y(v),r:2.5,fill:s.color});const tip=document.createElementNS(svg.namespaceURI,'title');tip.textContent=`${s.label}: ${v.toFixed(2)} °C · ${localTime(t)}`;dot.append(tip);previous={t,v,group:p.group}}}
+    for(const s of series){let previous=null;for(const p of points){const v=p[s.key],t=Date.parse(p.datetime);if(typeof v!=='number'||!Number.isFinite(v)){previous=null;continue}if(previous&&t-previous.t<=maxGap&&previous.group===p.group)node('line',{x1:x(previous.t),y1:y(previous.v),x2:x(t),y2:y(v),stroke:s.color,'stroke-width':2.5,...(s.dash?{'stroke-dasharray':'6 4'}:{})});const dot=node('circle',{cx:x(t),cy:y(v),r:2.5,fill:s.color});const tip=document.createElementNS(svg.namespaceURI,'title');tip.textContent=`${s.label}: ${v.toFixed(2)} ${unit} · ${localTime(t)}`;dot.append(tip);previous={t,v,group:p.group}}}
     const scroller=document.createElement('div');scroller.className='graph-scroll';scroller.tabIndex=0;scroller.setAttribute('aria-label',title+' – rulla i sidled på liten skärm');scroller.append(svg);host.append(scroller);
     const legend=document.createElement('div');legend.className='graph-legend';for(const s of series){const span=document.createElement('span');span.textContent=(s.dash?'┄ ':'● ')+s.label;span.style.color=s.color;legend.append(span)}host.append(legend);
 }
 const originalTelemetry=telemetry;
-telemetry=async function(){await originalTelemetry();try{const t=await api('telemetry');plot(weatherGraph,(t.forecast?.points||[]).filter(p=>Date.parse(p.datetime)<=Date.now()+24*3600000),[{key:'temperature',label:'Prognos utomhus',color:'#146b88'}],'Väderprognos kommande 24 timmar',5400000)}catch(e){weatherGraph.textContent='Vädergrafen kunde inte hämtas.'}};
+telemetry=async function(){await originalTelemetry();try{
+    const t=await api('telemetry');const points=(t.forecast?.points||[]).filter(p=>Date.parse(p.datetime)<=Date.now()+24*3600000);
+    plot(weatherGraph,points,[{key:'temperature',label:'Utomhustemperatur',color:'#146b88'}],'Utomhustemperatur kommande 24 timmar',5400000,{empty:'Ingen giltig timprognos för temperatur.'});
+    plot(cloudGraph,points,[{key:'cloud_coverage',label:'Molntäckning',color:'#7a5a9e'}],'Molntäckning kommande 24 timmar',5400000,{unit:'%',range:[0,100],empty:'Molnprognos saknas hos vald väderentitet.'});
+    plot(solarGraph,points,[{key:'solar_irradiance',label:'Solinstrålning',color:'#b47a19'}],'Solinstrålning kommande 24 timmar',5400000,{unit:'W/m²',min:0,empty:'Prognos för solinstrålning saknas hos vald väderentitet.'});
+}catch(e){for(const graph of [weatherGraph,cloudGraph,solarGraph])graph.textContent='Vädergrafen kunde inte hämtas.'}};
 async function loadTrends(){try{await timeZoneReady;const r=await api('trends');$('trends-status').textContent=r.message;plot($('indoor-trend'),r.points,[{key:'indoor',label:'Inomhus',color:'#146b88'},{key:'target',label:'Börvärde',color:'#956211',dash:true}],'Inomhustemperatur och börvärde',1200000);plot($('control-trend'),r.points,[{key:'outdoor',label:'Verklig utetemperatur',color:'#527482'},{key:'applied',label:'Ohmigo inställt',color:'#146b88'},{key:'pump_outdoor',label:'Värmepump avläst',color:'#b45d24'},{key:'proposal',label:'PI-förslag',color:'#97547e',dash:true},{key:'mpc_proposal',label:'MPC-förslag',color:'#27835f',dash:true}],'Utetemperatur och reglering',1200000)}catch(e){$('trends-status').textContent='Kunde inte läsa mätloggen.'}}
 loadTrends();setInterval(loadTrends,60000);
 const stepNames=['Givare','Komfort & styrning','Granska'];

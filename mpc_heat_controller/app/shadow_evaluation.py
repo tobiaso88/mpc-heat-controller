@@ -15,7 +15,8 @@ def _nearest(samples, target, mapping, entity):
         if (settings.get('indoor') != mapping['indoor'] or
                 settings.get('outdoor') != mapping['outdoor'] or
                 settings.get('solar', '') != mapping['solar'] or
-                settings.get('cloud', '') != mapping['cloud']):
+                settings.get('cloud', '') != ('' if mapping.get('cloud_auto') else mapping['cloud']) or
+                mapping.get('cloud_auto') and settings.get('weather') != mapping.get('weather')):
             continue
         distance = abs((_time(stamp)-target).total_seconds())
         if distance > 1800 or best is not None and distance >= best[0]:

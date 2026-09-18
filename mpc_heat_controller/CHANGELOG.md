@@ -1,3 +1,10 @@
+# 0.14.0
+
+- Läser och loggar automatiskt aktuell molntäckning från vald Home Assistant-väderentitet när den finns. En validerad molnmodell kan lära av rumstemperaturen utan separat solsensor; temperaturmodellen används som reserv.
+- Översiktens väderprognos visar separata diagram för utomhustemperatur, molntäckning och eventuell solinstrålning, med rätt enheter och tydliga besked när ett fält saknas.
+- Utvärderingen av arkiverade skuggförslag kan jämföra automatisk molnprognos med senare molnuppgifter.
+- MPC fortsätter enbart i skuggläge. Aktiv styrning är fortfarande PI med oförändrade säkerhetsspärrar och watchdogkrav.
+
 # 0.13.0
 
 - MPC i skuggläge kan använda historisk solinstrålning eller molnighet tillsammans med motsvarande timprognos. Utan solunderlag används fortsatt utetemperaturmodellen.

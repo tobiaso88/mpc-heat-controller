@@ -66,6 +66,41 @@ class AutoModelTests(unittest.TestCase):
             self.assertEqual(saved['status']['state'],'needs_data')
             self.assertIsNone(saved['report'])
 
+    def test_weather_cloud_is_learned_without_extra_sensor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data=Path(directory)
+            config=validate({'mode':'shadow','indoor':['sensor.room'],'outdoor':'sensor.out',
+                             'applied_signal':'number.signal','weather':'weather.home'})
+            start=datetime.now(timezone.utc)-timedelta(hours=259)
+            temperature=21.0
+            with sqlite3.connect(data/'measurements.sqlite') as db:
+                db.execute('CREATE TABLE samples (time TEXT PRIMARY KEY, readings TEXT, settings TEXT)')
+                for h in range(260):
+                    outside=5+4*math.sin(h/19)
+                    signal=3+3*math.sin(h/13)
+                    cloud=50+40*math.sin(h/11)
+                    readings=[{'entity':entity,'value':value,'quality':'OK'} for entity,value in
+                              [('sensor.room',temperature),('sensor.out',outside),
+                               ('number.signal',signal),('weather.home#cloud_coverage',cloud)]]
+                    db.execute('INSERT INTO samples VALUES (?,?,?)',
+                               ((start+timedelta(hours=h)).isoformat(),json.dumps(readings),json.dumps(config)))
+                    temperature+=0.5+0.025*(outside-temperature)-0.01*signal-0.001*cloud
+            AutoModel(data).maybe_train(config,datetime.now(timezone.utc))
+            saved=model_store.load_auto(data)
+            self.assertEqual(saved['status']['state'],'ready')
+            self.assertTrue(saved['report']['mapping']['cloud_auto'])
+            self.assertIsNotNone(saved['report']['fallback'])
+            forecast=[{'datetime':(datetime.now(timezone.utc)+timedelta(hours=h+1)).isoformat(),
+                       'temperature':5} for h in range(24)]
+            readings=[{'entity':'sensor.room','value':21.0,'quality':'OK'},
+                      {'entity':'number.signal','value':4.0,'quality':'OK'}]
+            states=[{'entity_id':'number.signal','state':'4',
+                     'last_updated':datetime.now(timezone.utc).isoformat(),
+                     'attributes':{'unit_of_measurement':'°C','min':-15,'max':30,'step':0.5}}]
+            result=AutoModel(data).result(config,readings,forecast,states)
+            self.assertEqual(len(result['plan']),24)
+            self.assertIn('utetemperaturmodellen används',result['message'])
+
     def test_waits_for_enough_complete_hours(self):
         with tempfile.TemporaryDirectory() as directory:
             data = Path(directory)

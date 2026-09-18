@@ -1,4 +1,4 @@
-# MPC Heat Controller 0.13.0
+# MPC Heat Controller 0.14.0
 
 ## Grundläge och aktiv PI
 
@@ -30,7 +30,7 @@ I nollställs vid datafel, omstart, relevanta inställningsändringar, demo elle
 
 Mätvärden och konfiguration sparas i /data/measurements.sqlite, PI-resultat i tabellen pi_samples och MPC-skuggförslag i mpc_samples, med 90 dagars retention. Insamling sker cirka var femte minut i skuggläge och varje minut vid aktiv PI, även när UI är stängt. Kommandostatus visas separat. Uppföljningsrum ingår inte i temperaturmedelvärdet.
 
-Väderprognos hämtas var 30:e minut från vald HA-entitet med hourly via weather.get_forecasts. Hämtningstid är inte leverantörens publiceringstid.
+Väderprognos hämtas var 30:e minut från vald HA-entitet med hourly via weather.get_forecasts. Hämtningstid är inte leverantörens publiceringstid. Översikten visar separata diagram för prognostiserad utomhustemperatur, molntäckning och eventuell solinstrålning under kommande dygn, med varsin enhet och tydligt besked om fält saknas.
 
 Appens mätlogg aggregeras automatiskt till timmedel för valda reglergivare, utegivaren och Ohmigos faktiska inställda värde. Efter minst 250 kompletta timmar tränas och valideras husmodellen automatiskt, därefter högst en gång per dygn. Givarval måste vara oförändrade inom perioden. Automatisk status och modell sparas i /data/model.sqlite.
 
@@ -82,7 +82,7 @@ Välj vid behov **Värmepumpens avlästa utetemperatur (valfri)** i Inställning
 
 Appen läser faktisk `weather.get_forecasts`-respons för vald timväderentitet. `temperature` krävs. `cloud_coverage` (%) och det leverantörsspecifika `solar_irradiance` (W/m²) tas med endast när de finns och är giltiga. Gränssnittet visar tillgängliga fält och markerar avsaknad av solinstrålningsprognos. Home Assistants generella prognosformat dokumenterar `cloud_coverage`, men garanterar inte solinstrålning. Vald väderentitets verkliga stöd måste därför kontrolleras i appen; källan kan inte identifieras från denna kodbas.
 
-Välj en historisk W/m²-sensor för solinstrålning eller en %-sensor för molnighet, beroende på vilket fält timprognosen faktiskt ger under hela kommande dygnet. Modellen tränas enbart på samma storhet som planen använder. Utan valt solunderlag används en temperaturbaserad modell. Vid valt solunderlag men för få kompletta timmar eller saknat prognosfält visas inget MPC-förslag. Minst 250 kompletta timvärden krävs.
+Ingen separat solsensor krävs. Appen kan automatiskt logga aktuell molnighet från vald väderentitet och lära dess samband med uppmätt innetemperatur. Om både denna historik och 24 timmars molnprognos finns och modellen valideras används molnmodellen. Annars används den temperaturbaserade modellen. Den som redan har en W/m²-sensor eller en separat %-sensor kan fortfarande välja den manuellt; då måste motsvarande prognosfält finnas. Minst 250 kompletta timvärden krävs för varje modell.
 
 `ready` kräver minst 24 valideringsfönster samt MAE högst 0,8 °C vid 6, 12 och 24 timmar och minst 15 % förbättring mot att hålla aktuell rumstemperatur konstant. Gränserna är en konservativ spärr mot svaga modeller, inte en garanti för driftprestanda. Valideringen använder **verkligt framtida väder** och historisk styrsignal, vilket ger modellen bättre väderinformation än den hade haft vid beslut. Några arkiverade `weather.get_forecasts`-svar från beslutstillfällena finns ännu inte; utvärdering mot **då tillgängliga prognoser** kan därför inte rapporteras eller användas som bevis för prognoskvalitet. Överlappande fönster är dessutom beroende.
 
@@ -95,3 +95,9 @@ Varje beräknat MPC-skuggförslag sparas i `mpc_forecasts` med beslutstid, vald 
 Detta är **utvärdering av skuggförslag**. Inomhustemperaturen som senare mäts upp påverkades av verklig PI-styrning och faktiskt väder. Jämförelsen kan visa prognosfel under den körningen, men inte hur huset skulle ha reagerat på andra MPC-kommandon. Den bevisar därför inte att MPC-styrning skulle förbättra komfort eller energianvändning.
 
 En modell får inte `ready` om den skalade signalkoefficienten (`koefficient / skala`) inte ligger mellan −0,5 och −0,001 °C inomhus per timme för 1 °C högre simulerad utetemperatur. Negativt tecken är nödvändigt eftersom högre signal betyder mindre värme i denna installation. Gränserna stoppar både felvänd och orimligt stark eller försumbar effekt. Detta är en plausibilitetsspärr, inte ett kausalt bevis på signalens effekt.
+
+## Sol utan extra givare
+
+Välj inne- och utegivare, Ohmigos avlästa inställda temperatur och en timväderentitet. Appen loggar automatiskt `cloud_coverage` från väderentitetens **aktuella tillstånd** när attributet finns. Efter minst 250 kompletta timmar kan en molnmodell tränas mot uppmätt rumstemperatur och historisk signal; samma väderentitets molnprognos används då i skuggplanen. En temperaturbaserad modell tränas också och används när molnprognosen saknas eller molnmodellen inte valideras. Val av separat sol- eller molnsensor är frivilligt och avsett för redan installerade sensorer.
+
+Temperaturmätningarna visar hur huset faktiskt reagerar på värme, utetemperatur och tidigare solpåverkan. Utan en framtida sol- eller molnprognos kan modellen inte veta om ett ännu inte märkbart molntäcke kommer att ändras. Den kan då förutse utifrån uteprognosen och kända husförhållanden, men inte hävda att den förutser en plötslig solig period innan temperaturen påverkas. Ingen modell görs redo enbart för att aktuellt väderattribut finns; samma historiska storhet måste ha loggats och modellen måste klara kvalitetskontrollen.

@@ -15,10 +15,13 @@ CHECK_INTERVAL = timedelta(hours=1)
 TRAIN_INTERVAL = timedelta(hours=24)
 
 
-def mapping_for(config):
+def mapping_for(config, auto_cloud=False):
     mapping = {'indoor': sorted(config.get('indoor', [])),
                'outdoor': config.get('outdoor', ''),
                'signal': config.get('applied_signal', ''), 'solar': config.get('solar', ''), 'cloud': config.get('cloud', '')}
+    if auto_cloud and not mapping['solar'] and not mapping['cloud'] and config.get('weather'):
+        mapping['cloud'] = config['weather'] + '#cloud_coverage'
+        mapping['cloud_auto'] = True
     if not mapping['indoor'] or not mapping['outdoor'] or not mapping['signal']:
         return None
     if mapping['solar'] and mapping['cloud']: return None
@@ -43,7 +46,9 @@ def local_points(data, mapping):
             settings = json.loads(raw_settings)
             if (sorted(settings.get('indoor', [])) != mapping['indoor'] or
                     settings.get('outdoor') != mapping['outdoor'] or
-                    settings.get('applied_signal') != mapping['signal'] or settings.get('solar', '') != mapping.get('solar', '') or settings.get('cloud', '') != mapping.get('cloud', '')):
+                    settings.get('applied_signal') != mapping['signal'] or settings.get('solar', '') != mapping.get('solar', '') or
+                    settings.get('cloud', '') != ('' if mapping.get('cloud_auto') else mapping.get('cloud', '')) or
+                    mapping.get('cloud_auto') and settings.get('weather') + '#cloud_coverage' != mapping['cloud']):
                 excluded += 1
                 continue
             moment = datetime.fromisoformat(stamp.replace('Z', '+00:00'))
@@ -164,6 +169,8 @@ class AutoModel:
         try:
             saved = model_store.load_auto(self.data)
             current_mapping = mapping_for(config)
+            if saved and saved.get('report') and saved['report'].get('mapping', {}).get('cloud_auto'):
+                current_mapping = mapping_for(config, auto_cloud=True)
             same_model = bool(saved and saved.get('report') and saved['report'].get('mapping') == current_mapping)
             interval = TRAIN_INTERVAL if same_model else CHECK_INTERVAL
             if self.last_check and clock-self.last_check < interval:
@@ -177,7 +184,7 @@ class AutoModel:
                 except (KeyError, TypeError, ValueError):
                     pass
             self.last_check = clock
-            mapping = current_mapping
+            mapping = mapping_for(config)
             if config.get('mode') != 'shadow' or not mapping:
                 model_store.save_auto_status(self.data, {
                     'state': 'waiting', 'message': 'Välj skuggläge, rumsgivare, utegivare och Ohmigos inställda värde för automatisk träning.',
@@ -193,7 +200,22 @@ class AutoModel:
             try:
                 report = evaluate_points(points, mapping, incomplete_hours=info['incomplete_hours'], source='local_log')
                 if not quality(report): raise ValueError('Modellkvaliteten räcker inte: styrsignalens skalade effekt måste vara mellan −0,5 och −0,001 °C/h per °C; 6, 12 och 24 h kräver minst 24 fönster, MAE ≤0,8 °C och minst 15 % lägre MAE än temperaturpersistens.')
-                status.update({'state': 'ready', 'message': 'Automatisk modell tränad och validerad från appens mätlogg.',
+                automatic = mapping_for(config, auto_cloud=True)
+                if automatic and automatic.get('cloud_auto'):
+                    cloud_points, cloud_info = local_points(self.data, automatic)
+                    if len(cloud_points) >= MIN_COMPLETE_HOURS and max(cloud_points) >= clock-timedelta(hours=2):
+                        try:
+                            cloud_report = evaluate_points(cloud_points, automatic,
+                                incomplete_hours=cloud_info['incomplete_hours'], source='local_log')
+                            if quality(cloud_report):
+                                cloud_report['fallback'] = report
+                                report = cloud_report
+                                status['complete_hours'] = len(cloud_points)
+                                status['mapping'] = automatic
+                        except ValueError:
+                            pass
+                status.update({'state': 'ready', 'message': ('Molnmodell tränad från rumstemperatur och väderentitetens aktuella molnighet; utetemperaturmodell finns som reserv.'
+                                                          if report.get('mapping', {}).get('cloud_auto') else 'Automatisk temperaturmodell tränad och validerad från appens mätlogg.'),
                                'trained_at': clock.isoformat()})
                 model_store.save_auto(self.data, report, status)
             except ValueError as error:
@@ -208,7 +230,7 @@ class AutoModel:
             return {'state': 'waiting', 'message': 'Väntar på första kontrollen av mätloggen.', 'plan': []}
         status = saved.get('status') or {}
         report = saved.get('report')
-        mapping = mapping_for(config)
+        mapping = mapping_for(config, auto_cloud=bool(report and report.get('mapping', {}).get('cloud_auto')))
         if report and report.get('mapping') != mapping:
             return dict(status, state='collecting', message='Givarvalet har ändrats. Samlar en ny sammanhängande träningsperiod.', plan=[])
         values = {r['entity']: r.get('value') for r in readings
@@ -236,11 +258,16 @@ class AutoModel:
             except (KeyError,ValueError,TypeError,AttributeError): pass
         valid_model = bool(report and quality(report))
         plan = live_plan(report if status.get('state') == 'ready' and valid_model else None, inside, applied, forecast, config, output)
+        fallback_used = False
+        if not plan and report and status.get('state') == 'ready' and report.get('fallback') and quality(report['fallback']):
+            plan = live_plan(report['fallback'], inside, applied, forecast, config, output)
+            fallback_used = bool(plan)
         message = status.get('message', '')
-        if report and status.get('state') == 'ready' and not valid_model:
+        if report and status.get('state') == 'ready' and not valid_model and not fallback_used:
             message += ' Sparad modell har felvänd eller orimlig styrverkan och spärras.'
         elif report and status.get('state') == 'ready' and not plan:
             message += ' Liveförslag väntar på färsk, bekräftad number-utgång, giltiga mätvärden och 24 timmars matchande väderprognos.'
         elif plan:
+            message += (' Molnprognos saknas; utetemperaturmodellen används.' if fallback_used else '')
             message += ' MPC-förslaget är endast skuggläge och skickas inte.'
         return dict(status, report=report, plan=plan, message=message)

@@ -54,6 +54,27 @@ def readings(c, states):
                        'roles': role, 'value': value, 'quality': quality, 'reported_at': stamp, 'timestamp_source': 'last_reported' if s.get('last_reported') else 'last_updated'})
     return result
 
+
+def weather_cloud_reading(entity, states, clock=None):
+    """Current cloud cover from HA weather state, without a separate sensor."""
+    if not entity:
+        return None
+    state = next((s for s in states if s.get('entity_id') == entity), None)
+    if not state or state.get('attributes', {}).get('restored'):
+        return None
+    try:
+        value = float(state['attributes']['cloud_coverage'])
+        stamp = state.get('last_reported') or state.get('last_updated')
+        reported = datetime.fromisoformat(stamp.replace('Z', '+00:00'))
+        age = ((clock or now()) - reported).total_seconds()
+        if reported.tzinfo is None or not math.isfinite(value) or not 0 <= value <= 100 or not -60 <= age <= 86400:
+            return None
+        return {'entity': entity + '#cloud_coverage', 'name': 'Aktuell molnighet från ' + entity,
+                'roles': ['Automatiskt väderunderlag'], 'value': value, 'quality': 'OK',
+                'reported_at': stamp, 'timestamp_source': 'last_reported' if state.get('last_reported') else 'last_updated'}
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None
+
 def sync_target_climates(c,states,call=None):
     call=request if call is None else call
     entities=c.get('target_climates',[])
@@ -131,6 +152,9 @@ class Collector:
         try:
             states = request('states')
             items = readings(c, states)
+            cloud = weather_cloud_reading(c.get('weather'), states)
+            if cloud:
+                items.append(cloud)
             target_sync=sync_target_climates(c,states)
             if self.control.resume(c,states,items):self.pi.reset()
             if self.control.get()['active']:
@@ -204,6 +228,11 @@ class Collector:
             db.execute('CREATE TABLE IF NOT EXISTS mpc_forecasts (time TEXT PRIMARY KEY, entity TEXT NOT NULL, fetched_at TEXT NOT NULL, fields TEXT NOT NULL, forecast TEXT NOT NULL, plan TEXT NOT NULL, mapping TEXT NOT NULL)')
             if plan and forecast and config and forecast.get('entity') and forecast.get('fetched_at'):
                 mapping={'indoor':config['indoor'],'outdoor':config['outdoor'],'solar':config.get('solar',''),'cloud':config.get('cloud','')}
+                trained = (result.get('report') or {}).get('mapping') or {}
+                if trained.get('cloud_auto'):
+                    mapping['cloud'] = trained['cloud']
+                    mapping['cloud_auto'] = True
+                    mapping['weather'] = config.get('weather', '')
                 points=[{key:row[key] for key in ('datetime','temperature','solar_irradiance','cloud_coverage') if key in row}
                         for row in forecast.get('points',[])[:24]]
                 fields=sorted({key for row in points for key in row if key!='datetime'})

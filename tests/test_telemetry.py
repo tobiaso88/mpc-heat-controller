@@ -5,9 +5,24 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 from app.core import validate
-from app.telemetry import normalize_forecast, readings, sync_target_climates, Collector
+from app.telemetry import normalize_forecast, readings, sync_target_climates, Collector, weather_cloud_reading
 
 class TelemetryTests(unittest.TestCase):
+    def test_current_weather_cloud_needs_no_sensor(self):
+        t=datetime.now(timezone.utc)
+        state={'entity_id':'weather.home','state':'cloudy','last_updated':t.isoformat(),
+               'attributes':{'cloud_coverage':65}}
+        result=weather_cloud_reading('weather.home',[state],t)
+        self.assertEqual(result['entity'],'weather.home#cloud_coverage')
+        self.assertEqual(result['value'],65)
+        state['attributes']['cloud_coverage']=101
+        self.assertIsNone(weather_cloud_reading('weather.home',[state],t))
+        state['attributes']['cloud_coverage']=65
+        state['last_updated']=(t-timedelta(days=2)).isoformat()
+        self.assertIsNone(weather_cloud_reading('weather.home',[state],t))
+        state['attributes'].pop('cloud_coverage')
+        self.assertIsNone(weather_cloud_reading('weather.home',[state],t))
+
     def test_selected_climates_follow_app_target(self):
         c=validate({'mode':'shadow','indoor':['sensor.in'],'outdoor':'sensor.out','target_climates':['climate.living','climate.kitchen']})
         states=[{'entity_id':'climate.living','state':'heat','attributes':{'temperature':20}},
