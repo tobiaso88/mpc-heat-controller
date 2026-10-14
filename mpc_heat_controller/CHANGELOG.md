@@ -1,3 +1,7 @@
+# 0.15.9
+
+- Rättar versionsnumret i gränssnittets sidfot så att det matchar appens version i `config.yaml`. Innehåller även Forecast.Solar-korrigeringen från 0.15.8.
+
 # 0.15.8
 
 - Rättar att giltiga soluppgångs-/solnedgångspunkter mellan hela klockslag kunde stoppa all nattkomplettering i Forecast.Solar. De filtreras från timmodellen utan att behandlas som ogiltiga källvärden.
