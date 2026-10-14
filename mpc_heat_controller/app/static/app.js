@@ -1,60 +1,149 @@
+// Core: helpers, API access, shared state, navigation and polling.
+// The API is unchanged; every control or configuration request goes through api().
 const $ = id => document.getElementById(id);
-let settings, entities=[], pvSources=[], step=0, historyCsv=null;
-async function api(path, body, raw=false){const response=await fetch(`api/${path}`,body===undefined?{}:{method:'POST',headers:{'X-MPC-Request':'1','Content-Type':raw?'text/csv':'application/json'},body:raw?body:JSON.stringify(body)});const value=await response.json();if(!response.ok)throw Error(value.error||'Kunde inte läsa data');return value}
-function notice(message=''){$('notice').textContent=message}
-function show(view){document.querySelectorAll('.view').forEach(e=>e.hidden=e.id!==view);document.querySelectorAll('nav button').forEach(e=>e.classList.toggle('selected',e.dataset.view===view));notice()}
-document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>show(b.dataset.view));$('configure').onclick=()=>show('setup');
-function chart(plan){const svg=$('chart');svg.replaceChildren();svg.hidden=!plan.length;$('empty-chart').hidden=!!plan.length;if(!plan.length)return;const low=Math.min(settings.comfort_min-0.5,...plan.map(p=>p.indoor)), high=Math.max(settings.comfort_max+0.5,...plan.map(p=>p.indoor));const x=i=>55+i*810/23,y=v=>220-(v-low)/(high-low)*190;function draw(tag,attrs,text){const e=document.createElementNS('http://www.w3.org/2000/svg',tag);Object.entries(attrs).forEach(([k,v])=>e.setAttribute(k,v));if(text)e.textContent=text;svg.append(e)}draw('rect',{x:55,y:y(settings.comfort_max),width:810,height:y(settings.comfort_min)-y(settings.comfort_max),fill:'#e4f1ee'});for(let i=0;i<5;i++){let value=low+(high-low)*i/4;draw('line',{x1:55,x2:865,y1:y(value),y2:y(value),stroke:'#dce6e9'});draw('text',{x:2,y:y(value)+4,fill:'#617680','font-size':13},value.toFixed(1)+'°')}draw('polyline',{points:plan.map((p,i)=>`${x(i)},${y(p.indoor)}`).join(' '),fill:'none',stroke:'#146b88','stroke-width':3});[0,5,11,17,23].forEach(i=>draw('text',{x:x(i)-12,y:249,fill:'#617680','font-size':13},`+${i+1} h`))}
-async function refresh(){try{const s=await api('status');$('mode').textContent=s.mode==='demo'?'Demo · simulerade data':'Skuggläge';$('temperature').textContent=s.temperature===null?'—':s.temperature.toFixed(1)+' °C';$('temperature-label').textContent=s.mode==='demo'?'Simulerat medelvärde':s.temperature_message||'Valda rumsgivares medelvärde';$('target').textContent=settings.target.toFixed(1)+' °C';$('band').textContent=`Tillåtet intervall ${settings.comfort_min}–${settings.comfort_max} °C`;$('signal-label').textContent=s.mode==='demo'?'MPC-förslag (demo)':'MPC-förslag (skugga)';$('signal').textContent=s.plan.length?s.plan[0].signal.toFixed(1)+' °C':'—';$('status-text').textContent=s.message;$('chart-caption').textContent=s.mode==='demo'?'Simulering med ett exempelhus och exempelväder.':'Den automatiska modellen samlar eller validerar data.';$('rooms').textContent=settings.indoor.length?settings.indoor.map(id=>entities.find(e=>e.entity_id===id)?.attributes.friendly_name||id).join(', '):'Välj givare i installationsguiden.';chart(s.plan)}catch(e){notice(e.message)}}
-function populate(){for(const key of ['indoor','observe','target_climates','outdoor','supply','return','weather','solar','cloud','pv_power','pv_forecast','applied_signal','pump_outdoor','old_automation']){const el=$(key);el.replaceChildren();if(!el.multiple)el.add(new Option('Välj senare',''));if(key==='pv_forecast'){for(const source of pvSources)el.add(new Option(source.label,source.id));if(settings.pv_forecast&&!pvSources.some(source=>source.id===settings.pv_forecast))el.add(new Option('Vald källa saknas · '+settings.pv_forecast,settings.pv_forecast));el.value=settings.pv_forecast;continue}const choices=entities.filter(e=>key==='target_climates'?e.entity_id.startsWith('climate.'):key==='old_automation'?e.entity_id.startsWith('automation.'):key==='weather'?e.entity_id.startsWith('weather.'):key==='solar'?e.entity_id.startsWith('sensor.') && e.attributes.unit_of_measurement==='W/m²':key==='pv_power'?e.entity_id.startsWith('sensor.') && ['W','kW'].includes(e.attributes.unit_of_measurement):key==='cloud'?e.entity_id.startsWith('sensor.') && e.attributes.unit_of_measurement==='%':e.attributes.unit_of_measurement==='°C' && (key==='applied_signal'?e.entity_id.startsWith('number.')||e.entity_id.startsWith('sensor.'):e.entity_id.startsWith('sensor.')));const selected=Array.isArray(settings[key])?settings[key]:[settings[key]];for(const id of selected.filter(Boolean)){if(!choices.some(e=>e.entity_id===id))choices.push({entity_id:id,state:'saknas',attributes:{friendly_name:id}})}choices.forEach(e=>{const shown=e.attributes.temperature==null?e.state:e.attributes.temperature+' °C';const opt=new Option(`${e.attributes.friendly_name||e.entity_id} · ${shown}`,e.entity_id);opt.selected=selected.includes(e.entity_id);el.add(opt)})}for(const key of ['comfort_min','comfort_max','signal_min','signal_max','max_step','pi_kp','pi_ki','pi_limit','pi_rate'])$(key).value=settings[key];$('target-input').value=settings.target;$('run-mode').value=settings.mode;$('watchdog_seconds').value=settings.watchdog_seconds;for(const k of ['watchdog_verified','exclusive_writer_confirmed','auto_restart'])$(k).checked=settings[k]}
-function collect(){const c={...settings};for(const k of ['indoor','observe','target_climates'])c[k]=Array.from($(k).selectedOptions).map(o=>o.value);for(const k of ['outdoor','supply','return','weather','solar','cloud','pv_power','pv_forecast','applied_signal','pump_outdoor','old_automation'])c[k]=$(k).value;for(const k of ['comfort_min','comfort_max','signal_min','signal_max','max_step','pi_kp','pi_ki','pi_limit','pi_rate'])c[k]=Number($(k).value);c.target=Number($('target-input').value);c.mode=$('run-mode').value;c.watchdog_seconds=Number($('watchdog_seconds').value);for(const k of ['watchdog_verified','exclusive_writer_confirmed','auto_restart'])c[k]=$(k).checked;return c}
-function setStep(n){step=n;document.querySelectorAll('.step').forEach((e,i)=>e.hidden=i!==n);$('back').hidden=n===0;$('next').hidden=n===2;$('save').hidden=n!==2;$('step-label').textContent=n===0?'1 · Givare': '1 · Givare ✓';if(n===2){const c=collect();$('review').replaceChildren();for(const [label,value] of [['Körläge',c.mode==='demo'?'Demo':'Skuggläge'],['Komfort',`${c.target} °C (${c.comfort_min}–${c.comfort_max} °C)`],['Rumsgivare',c.indoor.join(', ')||'Inga valda'],['Följande termostater',c.target_climates.join(', ')||'Inga valda'],['Utegivare',c.outdoor||'Inte vald'],['Väder',c.weather||'Inte anslutet'],['Historisk solinstrålning',c.solar||'Inte vald'],['Historisk molnighet',c.cloud||'Inte vald'],['Uppmätt solcellsproduktion',c.pv_power||'Inte vald'],['Forecast.Solar-källa',c.pv_forecast||'Inte vald']]){const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;dd.textContent=value;$('review').append(dt,dd)}}}
-$('back').onclick=()=>setStep(step-1);$('next').onclick=()=>{if($('settings').reportValidity())setStep(step+1)};$('settings').onsubmit=async e=>{e.preventDefault();try{settings=await api('config',collect());show('overview');notice('Inställningarna är sparade. Valda rumstermostater synkas i skuggläge.');await refresh();await telemetry()}catch(e){notice(e.message)}};
-$('inspect').onclick=async()=>{const file=$('file').files[0];if(!file){$('history-status').textContent='Välj en CSV-fil först.';return}if(file.size>20000000){$('history-status').textContent='Filen får vara högst 20 MB.';return}$('inspect').disabled=true;$('history-status').textContent='Granskar…';try{historyCsv=null;$('model-panel').hidden=true;$('model-saved').textContent='Nytt underlag är inte sparat förrän utvärderingen lyckas.';const csv=await file.text();const report=await api('history',csv,true);historyCsv=csv;prepareModel(report);const tbody=$('history-table').querySelector('tbody');tbody.replaceChildren();report.entities.forEach(e=>{const tr=document.createElement('tr');[e.entity,e.rows,e.start,e.end,e.invalid,e.max_gap_hours===null?'—':e.max_gap_hours.toFixed(1)+' h'].forEach(v=>{const td=document.createElement('td');td.textContent=v??'—';tr.append(td)});tbody.append(tr)});$('history-table').hidden=false;$('history-status').textContent=report.message}catch(e){$('history-status').textContent=e.message}finally{$('inspect').disabled=false}};
-function prepareModel(report){for(const id of ['model-indoor','model-outdoor','model-signal']){const select=$(id);select.replaceChildren();if(!select.multiple)select.add(new Option('Välj signal',''));for(const e of report.entities)select.add(new Option(e.entity,e.entity))}const valid=report.entities.filter(e=>e.start&&e.end);if(valid.length){$('model-start').value=valid.map(e=>e.start.slice(0,10)).sort().at(-1);$('model-end').value=valid.map(e=>e.end.slice(0,10)).sort()[0]}$('model-panel').hidden=false;$('model-status').textContent='Välj en period under värmesäsongen. Välj endast de signaler som ska ingå; framledning och retur krävs inte för denna första modell.';tableRows('model-results',[])}
-$('evaluate-model').onclick=async()=>{if(!historyCsv)return;$('evaluate-model').disabled=true;$('model-status').textContent='Anpassar modellen och testar den på senare historik…';tableRows('model-results',[]);try{const result=await api('model/evaluate',{csv:historyCsv,mapping:{indoor:Array.from($('model-indoor').selectedOptions).map(o=>o.value),outdoor:$('model-outdoor').value,signal:$('model-signal').value,start:$('model-start').value,end:$('model-end').value}});renderModel(result);$('model-saved').textContent='Underlag och resultat sparade i appen. Återställs vid nästa öppning.'}catch(e){$('model-status').textContent=e.message}finally{$('evaluate-model').disabled=false}};
-function renderModel(result){tableRows('model-results',result.metrics.map(m=>[m.hours+' h',m.windows,m.mae===null?'—':m.mae.toFixed(3),m.lag_mae==null?'—':m.lag_mae.toFixed(3),m.baseline_mae===null?'—':m.baseline_mae.toFixed(3)]));$('model-status').textContent=`${result.complete_hours} kompletta timmar. Validering från ${localTime(result.split_at)}. ${result.incomplete_hours} ofullständiga timmar uteslöts. ${result.comparison||''} ${result.message} ${result.aggregation}`}
-async function restoreModel(){try{const saved=await api('model/saved');if(!saved)return;historyCsv=saved.csv;prepareModel(await api('history',saved.csv,true));const m=saved.report.mapping;for(const option of $('model-indoor').options)option.selected=m.indoor.includes(option.value);$('model-outdoor').value=m.outdoor;$('model-signal').value=m.signal;$('model-start').value=m.start;$('model-end').value=m.end;renderModel(saved.report);$('model-saved').textContent='Sparat underlag återställt från '+localTime(saved.saved_at)+'. Du kan ändra perioden och köra igen.';$('history-status').textContent='Tidigare CSV-underlag har återställts från appens lagring.'}catch(e){$('history-status').textContent='Kunde inte återställa sparat modellunderlag: '+e.message}}
-function tableRows(id, rows){const body=$(id);body.replaceChildren();for(const row of rows){const tr=document.createElement('tr');for(const value of row){const td=document.createElement('td');td.textContent=value;tr.append(td)}body.append(tr)}}
-let displayTimeZone='Europe/Stockholm';
-const timeZoneReady=api('timezone').then(r=>{new Intl.DateTimeFormat('sv-SE',{timeZone:r.time_zone}).format();displayTimeZone=r.time_zone}).catch(()=>{});
-const localTime=(value,options={})=>value?new Date(value).toLocaleString('sv-SE',{...options,timeZone:displayTimeZone,timeZoneName:'shortOffset'}):'—';
-async function telemetry(){try{const t=await api('telemetry');renderPI(t.pi);renderMPC(t.mpc);renderControl(t.control);$('target-sync-status').textContent=t.target_sync?.message||'Ingen synkning av rumstermostater är aktiv.';$('entities-status').textContent=t.entities?.message||'Egna HA-entiteter: väntar på publicering.';const f=t.forecast||{};$('pv-status').textContent=t.pv_forecast?.message||'Ingen solcellsprognos vald.';$('weather-status').textContent=(f.message||'Väntar på data.')+(f.fields?.length?' Tillgängliga fält: '+f.fields.join(', ')+'.':'')+(f.fetched_at?' Hämtad '+localTime(f.fetched_at):'');tableRows('weather-rows',(f.points||[]).slice(0,24).map(p=>[localTime(p.datetime),p.temperature.toFixed(1)+' °C',p.solar_irradiance==null?'—':p.solar_irradiance.toFixed(0)+' W/m²',p.cloud_coverage==null?'—':p.cloud_coverage.toFixed(0)+' %',p.pv_power==null?'—':p.pv_power.toFixed(0)+' W']));tableRows('sensor-rows',(t.readings||[]).map(r=>[r.name,r.roles.join(', '),r.value===null?'—':r.value.toFixed(1)+(r.roles.includes('Automatiskt väderunderlag')||r.roles.includes('Molnighet')?' %':r.roles.includes('Solinstrålning')?' W/m²':r.roles.includes('Solcellsproduktion')?' W':' °C'),localTime(r.reported_at)+(r.reported_at?' · '+Math.max(0,Math.floor((Date.now()-Date.parse(r.reported_at))/60000))+' min sedan':'')+(r.timestamp_source==='last_updated'?' · HA saknar rapporttid; visar senaste ändring':''),r.quality]));$('logging-status').textContent=t.error||(t.logging?'Tidszon: '+displayTimeZone+' · Mätloggning '+(t.control?.active?'varje minut':'var femte minut')+' · sparas lokalt i 90 dagar. Senast '+localTime(t.sampled_at):'Demoläge: verkliga mätvärden visas om HA är ansluten, men loggas inte.')}catch(e){renderPI(null);renderMPC(null);$('control-status').textContent='Kan inte läsa styrstatus. Använd Stoppa eller stoppa appen i HA.';$('target-sync-status').textContent='Termostatsynkningens status är inte tillgänglig.';$('weather-status').textContent=e.message;$('pv-status').textContent='Solcellsprognosen är inte tillgänglig.';tableRows('weather-rows',[]);tableRows('sensor-rows',[]);$('logging-status').textContent='Mätdata är inte tillgängliga.'}}
-async function start(){try{await timeZoneReady;settings=await api('config');try{const result=await api('entities');entities=result.entities;$('connection').textContent=result.connected?'Ansluten till Home Assistant. Välj dina entiteter nedan.':result.message}catch(e){$('connection').textContent=e.message}try{const pv=await api('pv-sources');pvSources=pv.sources||[];$('pv-source-status').textContent=pv.message}catch(e){$('pv-source-status').textContent='Kunde inte läsa Forecast.Solar-källor.'}populate();setStep(0);await refresh();await telemetry();await restoreModel();setInterval(async()=>{await refresh();await telemetry()},60000)}catch(e){notice(e.message)}}start();
-$('pv-refresh').onclick=async()=>{const selected=$('pv_forecast').value;$('pv-source-status').textContent='Söker installerade Forecast.Solar-källor…';try{const pv=await api('pv-sources');pvSources=pv.sources||[];const el=$('pv_forecast');el.replaceChildren(new Option('Välj senare',''));for(const source of pvSources)el.add(new Option(source.label,source.id));if(selected&&!pvSources.some(source=>source.id===selected))el.add(new Option('Vald källa saknas · '+selected,selected));el.value=selected;$('pv-source-status').textContent=pv.message}catch(e){$('pv-source-status').textContent='Kunde inte läsa Forecast.Solar-källor. '+e.message}};
+const SVG = 'http://www.w3.org/2000/svg';
 
-function renderPI(pi){$('pi-status').textContent=pi?.message||'PI väntar på giltiga mätdata. Inget förslag skickas.';$('pi-values').replaceChildren();if(pi?.signal==null)return;for(const [label,value] of [['Temperaturfel (mål − uppmätt)',pi.error+' °C'],['P-del, värmebehov',pi.p+' °C'],['I-del, värmebehov',pi.i+' °C'],['Utetemperaturkompensation',pi.compensation+' °C'],['Föreslagen utetemperatur',pi.signal+' °C'],['Begränsad signal',pi.limited?'Ja':'Nej'],['Integration pausad av begränsning',pi.integrator_frozen?'Ja':'Nej']]){const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;dd.textContent=value;$('pi-values').append(dt,dd)}}
+const state = {
+  settings: null, entities: [], connected: false, connectionMessage: '', pvSources: [], pvMessage: '',
+  status: null, telemetry: null, telemetryFailed: false, trends: null, timeZone: 'Europe/Stockholm',
+  updatedAt: null, view: 'home', back: 24
+};
 
-function renderMPC(mpc){
-  const plan=mpc?.plan||[], report=mpc?.report;
-  const labels={temperature:'Temperaturmodell',pv:'Solcellsmodell',cloud:'Molnmodell'};
-  const reasons=mpc?.state==='ready'?[]:Object.entries(mpc?.quality_reasons||{}).flatMap(([kind,models])=>Object.values(models).flat().map(reason=>' '+(labels[kind]||kind)+': '+reason));
-  const selected=mpc?.state==='ready'&&report?.selected_model?' Vald kandidat: '+report.selected_model+'.':'';
-  const recovered=report?.recovered_pv_zero_samples?' Återanvända historiska nollvärden: '+report.recovered_pv_zero_samples+'.':'';
-  $('auto-model-status').textContent=(mpc?.message||'Väntar på automatisk modellstatus.')+selected+recovered+reasons.join('');
-  const metrics=report?.metrics||[];
-  tableRows('auto-model-results',metrics.map(m=>[m.hours+' h',m.windows,m.mae.toFixed(3),m.lag_mae.toFixed(3),m.baseline_mae.toFixed(3)]));
-  if(settings?.mode!=='shadow')return;
-  $('signal-label').textContent='MPC-förslag (skugga)';
-  $('signal').textContent=plan.length?plan[0].signal.toFixed(1)+' °C':'—';
-  $('chart-caption').textContent=mpc?.message||'MPC väntar på en validerad automatisk modell.';
-  chart(plan)
+async function api(path, body, raw = false) {
+  const response = await fetch(`api/${path}`, body === undefined ? {} : {method: 'POST',
+    headers: {'X-MPC-Request': '1', 'Content-Type': raw ? 'text/csv' : 'application/json'}, body: raw ? body : JSON.stringify(body)});
+  const value = await response.json();
+  if (!response.ok) throw Error(value.error || 'Kunde inte läsa data');
+  return value;
 }
 
-function renderControl(c){$('control-status').textContent=(c?.active?'AKTIV PI · ':c?.auto_restart_pending?'VÄNTAR PÅ ÅTERSTART · ':'PI avstängd · ')+(c?.message||'Väntar på status.')+(c?.sent_at?' Senast skickat: '+localTime(c.sent_at*1000)+' · '+c.value+' °C':'');$('control-start').disabled=!!c?.active}
-$('control-start').onclick=()=>$('control-dialog').showModal();$('control-cancel').onclick=()=>$('control-dialog').close();$('control-confirm').onclick=async()=>{$('control-confirm').disabled=true;try{renderControl(await api('control/start',{confirm:true}));$('control-dialog').close();await telemetry()}catch(e){$('control-dialog').close();notice(e.message)}finally{$('control-confirm').disabled=false}};$('control-stop').onclick=async()=>{try{await api('control/stop',{});await telemetry()}catch(e){notice('Stopp kunde inte bekräftas. Stoppa appen i HA. '+e.message)}};
+// DOM helpers. Attributes only: the CSP forbids inline style attributes, so styling is via classes,
+// data-attributes or the CSSOM (element.style), which the CSP allows.
+function h(tag, attrs = {}, ...children) {
+  const el = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs || {})) {
+    if (value === undefined || value === null || value === false) continue;
+    if (key === 'text') el.textContent = value;
+    else if (key === 'class') el.className = value;
+    else if (key.startsWith('on')) el.addEventListener(key.slice(2), value);
+    else if (key === 'data') Object.assign(el.dataset, value);
+    else el.setAttribute(key, value === true ? '' : value);
+  }
+  el.append(...children.flat().filter(c => c !== null && c !== undefined && c !== false));
+  return el;
+}
+function s(tag, attrs = {}, text) {
+  const el = document.createElementNS(SVG, tag);
+  for (const [key, value] of Object.entries(attrs)) if (value !== undefined && value !== null) el.setAttribute(key, value);
+  if (text !== undefined) el.textContent = text;
+  return el;
+}
 
-$('shadow-evaluate').onclick=async()=>{try{const result=await api('mpc/evaluation');const latest=result.proposals?.[0];$('shadow-evaluation-status').textContent=latest?`${result.message} Beslut ${localTime(latest.time)}, väderentitet ${latest.weather_entity}, hämtad ${localTime(latest.forecast_fetched_at)}. Väderfel ${latest.outdoor_mae??'—'} °C; solcellsfel ${latest.pv_power_mae??'—'} W; innefel ${latest.indoor_mae??'—'} °C.`:result.message;tableRows('shadow-evaluation-rows',(latest?.points||[]).map(p=>[p.hours+' h',p.forecast_outdoor.toFixed(1)+' °C',p.actual_outdoor==null?'—':p.actual_outdoor.toFixed(1)+' °C',p.forecast_pv_power==null?'—':p.forecast_pv_power.toFixed(0)+' W',p.actual_pv_power==null?'—':p.actual_pv_power.toFixed(0)+' W',p.predicted_indoor.toFixed(1)+' °C',p.actual_indoor==null?'—':p.actual_indoor.toFixed(1)+' °C',p.proposed_signal.toFixed(1)+' °C']))}catch(e){$('shadow-evaluation-status').textContent=e.message;tableRows('shadow-evaluation-rows',[])}};
-
-$('export-model-history').onclick=async()=>{
-  const button=$('export-model-history'), status=$('export-model-status');
-  button.disabled=true;status.textContent='Förbereder export…';
-  try{
-    const response=await fetch('api/model/export');
-    if(!response.ok)throw Error('Kunde inte exportera modellhistoriken. Försök igen.');
-    const url=URL.createObjectURL(await response.blob()), link=document.createElement('a');
-    link.href=url;link.download='mpc-model-history.zip';document.body.append(link);link.click();link.remove();
-    setTimeout(()=>URL.revokeObjectURL(url),60000);
-    status.textContent='Exporten har hämtats.';
-  }catch(e){status.textContent=e.message}finally{button.disabled=false}
+// Icons: simple stroke paths, 24×24.
+const ICONS = {
+  logo: 'M4 11.5 12 5l8 6.5V20a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z M9 17c1-1.2 1-2.3 0-3.5s-1-2.3 0-3.5 M13 17c1-1.2 1-2.3 0-3.5s-1-2.3 0-3.5',
+  home: 'M4 11.5 12 5l8 6.5V20a1 1 0 0 1-1 1h-4v-6h-6v6H5a1 1 0 0 1-1-1z',
+  weather: 'M8 3v1.5M3 8h1.5M4.6 4.6l1 1M12 5.6l-1 1M5.5 9.5a3 3 0 1 1 5.6-1.7 M8 20h9.5a3.5 3.5 0 1 0-.9-6.9 5 5 0 0 0-9.6 1.4A2.8 2.8 0 0 0 8 20z',
+  learning: 'M3 20h18 M6 16v-4 M10 16V8 M14 16v-6 M18 16V5',
+  settings: 'M4 7h10 M18 7h2 M4 17h4 M12 17h8 M16 5v4 M10 15v4',
+  refresh: 'M20 11a8 8 0 1 0-2.3 5.7 M20 4v7h-7',
+  sensor: 'M10 13.5V5a2 2 0 1 1 4 0v8.5a4 4 0 1 1-4 0z M12 9v8',
+  cloud: 'M7 19h10a4 4 0 1 0-1-7.9A5.5 5.5 0 0 0 5.4 13 3 3 0 0 0 7 19z',
+  sun: 'M12 3v2 M12 19v2 M3 12h2 M19 12h2 M5.6 5.6 7 7 M17 17l1.4 1.4 M5.6 18.4 7 17 M17 7l1.4-1.4 M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z',
+  moon: 'M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z',
+  model: 'M12 3a4 4 0 0 0-4 4 4 4 0 0 0-3 6.5A4 4 0 0 0 9 20h1V3.5 M12 3a4 4 0 0 1 4 4 4 4 0 0 1 3 6.5A4 4 0 0 1 15 20h-1V3.5',
+  link: 'M9 15l6-6 M10 6l1-1a4 4 0 0 1 6 6l-1 1 M14 18l-1 1a4 4 0 0 1-6-6l1-1',
+  thermostat: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M12 12l3-3',
+  log: 'M6 3h9l3 3v15H6z M9 10h6 M9 14h6 M9 18h4',
+  outdoor: 'M3 21h18 M5 21V11l7-5 7 5v10 M12 2v2 M19 4l-1 1 M5 4l1 1',
+  ohmigo: 'M5 7h14v10H5z M9 7V4 M15 7V4 M9 12h2 M14 11v2 M8 20h8',
+  pump: 'M3 6h18v12H3z M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z M12 9v6 M9 12h6 M6 9h1',
+  house: 'M4 11.5 12 5l8 6.5V20a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z M10 14h4v7h-4z',
+  up: 'M12 19V5 M6 11l6-6 6 6', down: 'M12 5v14 M6 13l6 6 6-6', flat: 'M5 12h14 M14 7l5 5-5 5'
 };
+function icon(name, cls = '') {
+  const svg = s('svg', {viewBox: '0 0 24 24', class: ('icon ' + cls).trim(), 'aria-hidden': 'true'});
+  svg.append(s('path', {d: ICONS[name] || ''}));
+  return svg;
+}
+function hydrateIcons(root = document) { root.querySelectorAll('[data-icon]').forEach(el => { if (!el.firstChild) el.append(icon(el.dataset.icon)); }); }
+
+// Formatting: Swedish decimal comma and the Home Assistant time zone.
+const finite = v => typeof v === 'number' && Number.isFinite(v);
+const num = (v, d = 1) => finite(v) ? v.toLocaleString('sv-SE', {minimumFractionDigits: d, maximumFractionDigits: d}) : '—';
+const deg = (v, d = 1) => finite(v) ? num(v, d) + ' °C' : '—';
+const degShort = (v, d = 1) => finite(v) ? num(v, d) + '°' : '—';
+const watts = v => !finite(v) ? '—' : Math.abs(v) >= 1000 ? num(v / 1000, 2) + ' kW' : num(v, 0) + ' W';
+function localTime(value, options = {timeStyle: 'short'}) {
+  if (value === null || value === undefined || value === '') return '—';
+  try { return new Date(value).toLocaleString('sv-SE', {...options, timeZone: state.timeZone}); }
+  catch { return new Date(value).toLocaleString('sv-SE', options); }
+}
+const clock = t => localTime(t, {hour: '2-digit', minute: '2-digit'});
+const dayTime = t => localTime(t, {weekday: 'short', hour: '2-digit', minute: '2-digit'});
+const fullTime = t => localTime(t, {dateStyle: 'medium', timeStyle: 'short'});
+function ago(value) {
+  if (!value) return '';
+  const minutes = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 60000));
+  if (minutes < 1) return 'nyss';
+  if (minutes < 60) return minutes + ' min sedan';
+  if (minutes < 48 * 60) return Math.round(minutes / 60) + ' h sedan';
+  return Math.round(minutes / 1440) + ' dygn sedan';
+}
+function zoneHour(t) { return Number(localTime(t, {hour: '2-digit', hourCycle: 'h23'})); }
+
+function entityName(id) {
+  if (!id) return '';
+  const e = state.entities.find(x => x.entity_id === id);
+  return e?.attributes?.friendly_name || id;
+}
+
+// Toasts
+function toast(message, {tone = 'ok', action, timeout = 5000} = {}) {
+  const box = h('div', {class: 'toast', data: {tone}, role: tone === 'err' ? 'alert' : 'status'}, h('span', {text: message}));
+  if (action) box.append(h('button', {type: 'button', text: action.label, onclick: () => { action.run(); box.remove(); }}));
+  $('toasts').append(box);
+  setTimeout(() => box.remove(), tone === 'err' ? Math.max(timeout, 9000) : timeout);
+}
+
+// Navigation via hash so views can be linked and survive reloads inside the HA ingress panel.
+const ROUTES = {hem: 'home', vader: 'weather', lararande: 'learning', installningar: 'settings'};
+function route() {
+  const [page, anchor] = location.hash.slice(1).split('/');
+  const view = ROUTES[page] || 'home';
+  state.view = view;
+  document.querySelectorAll('.view').forEach(v => v.hidden = v.id !== view);
+  document.querySelectorAll('[data-view]').forEach(a => a.setAttribute('aria-current', a.dataset.view === view ? 'page' : 'false'));
+  if (anchor) requestAnimationFrame(() => $('s-' + anchor)?.scrollIntoView({behavior: 'smooth', block: 'start'}));
+  else window.scrollTo({top: 0});
+  window.dispatchEvent(new CustomEvent('viewchange', {detail: view}));
+}
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+window.addEventListener('hashchange', route);
+
+// Data loading
+async function loadEntities() {
+  try {
+    const result = await api('entities');
+    state.entities = result.entities || [];
+    state.connected = !!result.connected;
+    state.connectionMessage = result.connected ? 'Ansluten till Home Assistant · ' + state.entities.length + ' entiteter tillgängliga.' : result.message;
+  } catch (e) { state.connectionMessage = e.message; }
+}
+async function loadPvSources() {
+  try { const pv = await api('pv-sources'); state.pvSources = pv.sources || []; state.pvMessage = pv.message; }
+  catch { state.pvMessage = 'Kunde inte läsa Forecast.Solar-källor.'; }
+}
+async function refresh() {
+  const button = $('refresh');
+  button.classList.add('spinning');
+  const [status, telemetry, trends] = await Promise.allSettled([api('status'), api('telemetry'), api('trends')]);
+  if (status.status === 'fulfilled') state.status = status.value;
+  state.telemetryFailed = telemetry.status !== 'fulfilled';
+  state.telemetry = telemetry.status === 'fulfilled' ? telemetry.value : null;
+  if (trends.status === 'fulfilled') state.trends = trends.value;
+  state.updatedAt = Date.now();
+  button.classList.remove('spinning');
+  if (status.status !== 'fulfilled') toast(status.reason.message, {tone: 'err'});
+  window.dispatchEvent(new Event('datachange'));
+}

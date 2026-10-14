@@ -1,13 +1,309 @@
 <!doctype html>
-<html lang="sv"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MPC · Värmekontroll</title><link rel="stylesheet" href="style.css"></head>
-<body><div class="shell"><aside><div class="brand">MPC<span>Värmekontroll</span></div><nav aria-label="Huvudmeny"><button data-view="overview" class="selected">Översikt</button><button data-view="setup">Inställningar</button><button data-view="history">Historik</button></nav><div class="aside-note">Komfortvärme<br><strong>Styrning enligt PI-status</strong></div></aside>
-<main><header><span>DITT HEM · VÄRMESTYRNING</span><span id="mode" class="badge">Demo</span></header><div id="notice" role="status"></div>
-<section id="overview" class="view"><div class="title"><div><h1>Din värme</h1><p>Temperatur, komfort och styrning på samma plats.</p></div><button id="configure">Ändra inställningar</button></div>
-<div class="metrics"><article><span>Inomhustemperatur</span><strong id="temperature">—</strong><small id="temperature-label">Simulerat medelvärde</small></article><article><span>Komfortmål</span><strong id="target">—</strong><small id="band">—</small></article><article><span id="signal-label">MPC-förslag (demo)</span><strong id="signal">—</strong><small>Skickas inte till värmepumpen</small></article></div>
-<article class="chart-card"><div class="chart-head"><div><h2>Prognos för inomhustemperatur</h2><p id="chart-caption">Simulering med ett exempelhus och exempelväder.</p></div><span class="legend">● Inomhus &nbsp; ▧ Komfortintervall</span></div><svg id="chart" viewBox="0 0 900 260" role="img" aria-label="Prognos för inomhustemperatur och komfortintervall"></svg><p id="empty-chart" hidden>Den automatiska husmodellen samlar eller validerar fortfarande data.</p></article>
-<article class="chart-card"><h2>Väderprognos · utomhustemperatur och sol</h2><p id="pv-status" role="status">Ingen solcellsprognos vald.</p><p id="weather-status">Hämtar prognos…</p><div class="table-wrap"><table><thead><tr><th>Tid</th><th>Temperatur</th><th>Solinstrålning</th><th>Molnighet</th><th>Solcellsprognos</th></tr></thead><tbody id="weather-rows"></tbody></table></div></article><article class="chart-card"><h2>Valda givare</h2><p id="logging-status"></p><div class="table-wrap"><table><thead><tr><th>Givare</th><th>Användning</th><th>Värde</th><th>Senast rapporterad</th><th>Status</th></tr></thead><tbody id="sensor-rows"></tbody></table></div></article><article class="chart-card"><h2>PI-regulator</h2><p id="entities-status" role="status">Egna HA-entiteter: väntar på publicering.</p><p id="control-status" role="status">Aktiv styrning avstängd.</p><p id="target-sync-status" role="status">Ingen synkning av rumstermostater är aktiv.</p><button id="control-start" type="button">Aktivera PI-styrning…</button> <button id="control-stop" type="button">Stoppa PI-styrning</button><dialog id="control-dialog"><h2>Starta verklig värmestyrning?</h2><p>Appen kommer att skriva temperaturkommandon till vald Ohmigo-entitet. Den gamla automationen och alla andra skrivare måste vara avstängda. Vid stopp upphör kommandona och verifierad watchdog måste återgå till riktig utegivare.</p><button id="control-cancel" type="button">Avbryt</button> <button id="control-confirm" type="button">Ja, starta PI</button></dialog><p id="pi-status">Väntar på mätdata.</p><dl id="pi-values"></dl></article><div class="lower"><article><h2>Regleringens nästa steg</h2><p id="status-text"></p></article><article><h2>Dina rum</h2><p id="rooms">Välj givare i installationsguiden.</p><small>Övriga rum kan följas utan att påverka medelvärdet.</small></article></div></section>
-<section id="setup" class="view" hidden><h1>Inställningar</h1><p>Välj givare och komfortmål. Du kan ändra allt senare.</p><ol class="steps"><li id="step-label">1 · Givare</li><li>2 · Komfort</li><li>3 · Granska</li></ol><form id="settings"><div id="step0" class="step"><h2>Temperaturer från Home Assistant</h2><p id="connection"></p><label>Givare för medeltemperatur<select id="indoor" multiple size="5"></select></label><small>Markera de rum som ska styra värmen. Alla valda givare väger lika.</small><div class="form-grid"><label>Verklig utetemperatur<select id="outdoor"></select></label><label>Framledning<select id="supply"></select></label><label>Retur<select id="return"></select></label><label>Väderentitet (kan väljas senare)<select id="weather"></select></label></div><p>Ingen extra solsensor krävs. Appen lär av rumstemperaturen och använder automatiskt väderentitetens aktuella molnighet när både den och timprognosen finns. Fälten nedan är endast för den som redan har egna sensorer.</p><label>Historisk solinstrålning W/m² (valfri)<select id="solar"></select></label><small>Välj en mätande sensor för att träna solmodellen. Prognosen behöver då solinstrålning för alla 24 timmar.</small><label>Historisk molnighet % (valfri)<select id="cloud"></select></label><small>Välj molnighet om väderkällan prognostiserar molnighet men inte solinstrålning. Välj bara ett av solfälten.</small><label>Faktisk solcellsproduktion (valfri, W eller kW)<select id="pv_power"></select></label><small>Välj växelriktarens momentana produktion, inte exporterad effekt eller dagens ackumulerade kWh.</small><label>Forecast.Solar-prognos för samma paneler<select id="pv_forecast"></select></label><small id="pv-source-status">Söker installerade solprognoser i Home Assistant…</small><button id="pv-refresh" type="button">Uppdatera prognoskällor</button><p>Välj båda solcellsfälten eller lämna båda tomma. Modellen använder bara prognosen när motsvarande uppmätta historik och en komplett timprognos finns.</p><label>Ohmigo · temperaturentitet<select id="applied_signal"></select></label><p>Avläses i skuggläge och används som utgång när du aktiverar PI. Värdet är ingen kvittens från värmepumpen.</p><label>Värmepumpens avlästa utetemperatur (valfri)<select id="pump_outdoor"></select></label><p>Temperaturen som värmepumpen uppfattar efter Ohmigos justering. Visas i mätvärden och historik för jämförelse med Ohmigos inställda värde. Påverkar inte PI-regleringen.</p><label>Rum att endast följa upp<select id="observe" multiple size="3"></select></label><p>Ingen väderintegration? Lämna fältet tomt. Välj en väderkälla med timprognos för att visa kommande utetemperatur.</p></div>
-<div id="step1" class="step" hidden><h2>Din komfort</h2><div class="form-grid"><label>Börvärde, °C<input id="target-input" type="number" min="7" max="35" step="0.1" required></label><label>Lägsta komforttemperatur, °C<input id="comfort_min" type="number" min="7" max="35" step="0.1" required></label><label>Högsta komforttemperatur, °C<input id="comfort_max" type="number" min="7" max="35" step="0.1" required></label><label>Körläge<select id="run-mode"><option value="demo">Demo – simulerade data</option><option value="shadow">Skuggläge – läs verkliga givare</option></select></label></div><label>Termostater som följer appens börvärde<select id="target_climates" multiple size="5"></select></label><p>Välj själv vilka climate-entiteter som ska synkas. Appens börvärde skrivs till valda termostater i skuggläge och kontrolleras varje minut. Välj inte värmepumpens egen termostat om den ska reglera självständigt.</p><details><summary>Förbered aktiv PI-styrning</summary><p>Spara först. Aktivering görs separat på översikten och kan återupptas automatiskt om du valt det. Stopp innebär att kommandon upphör, inte att vi direkt kopplar om hårdvaran.</p><label><input id="auto_restart" type="checkbox">Återuppta tidigare aktiverad PI automatiskt när givare och utgång är redo.</label><p>Efter omstart krävs tillgängliga, giltiga givarvärden som är högst 24 timmar gamla och två godkända kontroller med minst 60 sekunders mellanrum. Manuellt stopp eller sparade inställningar tar bort återstartsönskemålet. Aktivera PI en gång efter att du sparat.</p><label>Gammal styrande automation<select id="old_automation"></select></label><label>Verifierad watchdog-timeout, sekunder<input id="watchdog_seconds" type="number" min="0" max="86400" step="1"></label><label><input id="watchdog_verified" type="checkbox">Jag har verifierat att uteblivna temperaturkommandon ger fallback och att upprepade oförändrade kommandon håller timern vid liv.</label><label><input id="exclusive_writer_confirmed" type="checkbox">Jag har stängt av alla andra skrivare till denna utgång.</label><p>Kommandon avrundas till närmaste 0,5 °C och skickas högst var femte minut, även vid oförändrat värde. Kontroller sker varje minut. Minsta tillåtna watchdog-timeout är 600 sekunder. Välj en number-entitet under Ohmigos inställda temperatur.</p></details><details><summary>PI-inställningar</summary><p>Startvärden för utvärdering, inte injusterade för ditt hus. Positivt temperaturfel ger mer värme genom lägre simulerad utetemperatur.</p><div class="form-grid"><label>Kp, °C kompensation per °C fel<input id="pi_kp" type="number" min="0" max="20" step="0.1"></label><label>Ki, °C kompensation per °C fel och timme<input id="pi_ki" type="number" min="0" max="5" step="0.01"></label><label>Maximal kompensation, °C<input id="pi_limit" type="number" min="0.1" max="30" step="0.1"></label><label>Maximal signaländring, °C per timme<input id="pi_rate" type="number" min="0.1" max="20" step="0.1"></label></div><p>Ändrade givare, börvärde, PI-parametrar eller signalgränser nollställer I-delen. Absoluta signalgränser nedan gäller även PI.</p></details><details><summary>Avancerade gränser för simuleringen</summary><div class="form-grid"><label>Lägsta styrsignal, °C<input id="signal_min" type="number" min="-40" max="50" step="0.5"></label><label>Högsta styrsignal, °C<input id="signal_max" type="number" min="-40" max="50" step="0.5"></label><label>Maximal ändring per simulerad timme, °C<input id="max_step" type="number" min="0.1" max="5" step="0.1"></label></div></details></div>
-<div id="step2" class="step" hidden><h2>Granska dina val</h2><dl id="review"></dl><p class="callout">Komfortmål och följartermostater kan uppdateras medan PI körs. Andra tekniska ändringar stoppar PI och kräver ny aktivering.</p></div><div class="form-actions"><button type="button" id="back">Tillbaka</button><button type="button" id="next" class="primary">Fortsätt</button><button type="submit" id="save" class="primary" hidden>Spara inställningar</button></div></form></section>
-<section id="history" class="view" hidden><h1>Modell och historik</h1><article><h2>Automatisk modell</h2><button id="export-model-history" type="button">Exportera modellhistorik</button><p>ZIP med råhistorik, modellernas kompletta timvärden och senaste valideringsstatus. Tidsstämplar anges i UTC.</p><p id="export-model-status" role="status"></p><p id="auto-model-status" role="status">Kontrollerar appens mätlogg…</p><div class="table-wrap"><table><thead><tr><th>Horisont</th><th>Testfönster</th><th>Enkel modell, fel °C</th><th>Med fördröjning, fel °C</th><th>Oförändrad temperatur, fel °C</th></tr></thead><tbody id="auto-model-results"></tbody></table></div><p>Tränas automatiskt högst en gång per dygn när minst 250 kompletta timmar finns. Ett MPC-förslag visas först i skuggläge och skickas aldrig till värmepumpen.</p></article><article><h2>Utvärdering av skuggförslag</h2><p>Jämför arkiverad beslutsprognos och temperaturprognos med senare mätvärden. Resultatet visar inte hur alternativa MPC-kommandon skulle ha påverkat huset.</p><button id="shadow-evaluate" type="button">Visa senaste jämförelse</button><p id="shadow-evaluation-status" role="status"></p><div class="table-wrap"><table><thead><tr><th>Horisont</th><th>Väderprognos</th><th>Uppmätt ute</th><th>Solcellsprognos</th><th>Uppmätt produktion</th><th>MPC inneprognos</th><th>Uppmätt inne</th><th>Föreslagen signal</th></tr></thead><tbody id="shadow-evaluation-rows"></tbody></table></div></article><p>Du kan också läsa in äldre data manuellt från Home Assistant.</p><article><label>Historikfil, CSV (högst 20 MB)<input id="file" type="file" accept=".csv,text/csv"></label><p>Kolumner: entity_id, state, last_changed. Tidsstämplar ska innehålla tidszon.</p><button id="inspect" class="primary">Granska fil</button><p id="history-status" role="status"></p></article><div class="table-wrap"><table id="history-table" hidden><thead><tr><th>Entitet</th><th>Rader</th><th>Första värde</th><th>Sista värde</th><th>Ogiltiga</th><th>Största intervall</th></tr></thead><tbody></tbody></table></div><article id="model-panel" hidden><h2>Utvärdera importerad historik</h2><p>Välj vilka signaler i filen som ska användas. De första 70 procenten av kompletta timmar används för anpassning och den senare perioden för validering. Datum avser UTC.</p><label>Historiska rumsgivare<select id="model-indoor" multiple size="4"></select></label><div class="form-grid"><label>Verklig utetemperatur<select id="model-outdoor"></select></label><label>Historisk beräknad utetemperatur<select id="model-signal"></select></label><label>Från datum<input id="model-start" type="date"></label><label>Till datum<input id="model-end" type="date"></label></div><button id="evaluate-model" class="primary">Anpassa och validera offline</button><p id="model-status" role="status"></p><p id="model-saved" role="status"></p><div class="table-wrap"><table><thead><tr><th>Horisont</th><th>Testfönster</th><th>Enkel modell, fel °C</th><th>Med fördröjning, fel °C</th><th>Oförändrad temperatur, fel °C</th></tr></thead><tbody id="model-results"></tbody></table></div><p>Den importerade modellen aktiveras inte automatiskt. Testet använder kända historiska värden, inte historiska väderprognoser.</p></article><p>Filgranskningen ändrar inte originalfilen. Senaste lyckade importerade underlag och resultat sparas lokalt.</p></section>
-<footer>MPC Heat Controller · Förhandsversion 0.15.9 · Lokal drift</footer></main></div><script src="app.js"></script><script src="ui.js"></script></body></html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Värmekontroll</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="rail">
+    <div class="brand"><span class="brand-mark" data-icon="logo"></span><span>Värme<small>kontroll</small></span></div>
+    <nav aria-label="Huvudmeny">
+      <a href="#hem" data-view="home"><span data-icon="home"></span>Hem</a>
+      <a href="#vader" data-view="weather"><span data-icon="weather"></span>Väder</a>
+      <a href="#lararande" data-view="learning"><span data-icon="learning"></span>Lärande</a>
+      <a href="#installningar" data-view="settings"><span data-icon="settings"></span>Inställningar</a>
+    </nav>
+    <div class="rail-foot"><span id="rail-mode" class="pill">—</span><small id="rail-updated"></small></div>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <div class="topbar-brand"><span class="brand-mark" data-icon="logo"></span>Värmekontroll</div>
+      <span id="mode-pill" class="pill">Ansluter…</span>
+      <button id="refresh" class="icon-button" type="button" aria-label="Uppdatera nu"><span data-icon="refresh"></span></button>
+      <span id="updated" class="updated" aria-live="polite"></span>
+    </header>
+
+    <!-- HEM -->
+    <section id="home" class="view" aria-labelledby="home-title">
+      <h1 id="home-title" class="visually-hidden">Hem</h1>
+      <div id="welcome" class="card welcome" hidden></div>
+      <div class="home-grid">
+        <article class="card hero" aria-labelledby="hero-title">
+          <div class="dial-wrap">
+            <svg id="dial" viewBox="0 0 240 200" role="img" aria-label="Innetemperatur jämfört med komfortområdet"></svg>
+            <div class="dial-center"><strong id="hero-temp">—</strong><span id="hero-temp-label">Inne</span></div>
+          </div>
+          <div class="hero-text">
+            <p class="eyebrow" id="hero-eyebrow">Just nu</p>
+            <h2 id="hero-title">Hämtar temperatur…</h2>
+            <p id="hero-detail"></p>
+            <p id="hero-trend" class="trend"></p>
+            <div class="setpoint" role="group" aria-labelledby="setpoint-label">
+              <span id="setpoint-label" class="setpoint-label">Önskad temperatur</span>
+              <div class="stepper">
+                <button type="button" id="target-down" class="round" aria-label="Sänk önskad temperatur 0,5 grader">−</button>
+                <output id="target-value" aria-live="polite">—</output>
+                <button type="button" id="target-up" class="round" aria-label="Höj önskad temperatur 0,5 grader">+</button>
+              </div>
+              <small id="target-band"></small>
+            </div>
+          </div>
+        </article>
+
+        <article id="control-card" class="card control" aria-labelledby="control-title" data-state="unknown">
+          <p class="eyebrow">Styrning av värmepumpen</p>
+          <h2 id="control-title"><span class="dot" aria-hidden="true"></span><span id="control-headline">Hämtar status…</span></h2>
+          <p id="control-lead"></p>
+          <dl id="control-facts" class="facts"></dl>
+          <p id="control-message" class="fineprint"></p>
+          <div class="actions">
+            <button type="button" id="control-start" class="primary">Starta aktiv styrning…</button>
+            <button type="button" id="control-stop" class="danger" hidden>Stoppa styrning</button>
+          </div>
+          <details id="readiness" class="readiness fold">
+            <summary><span id="readiness-summary">Förberedelser</span></summary>
+            <ul id="readiness-list" class="checklist"></ul>
+            <a href="#installningar/styrning" class="link">Ändra under Inställningar → Aktiv styrning</a>
+          </details>
+        </article>
+      </div>
+
+      <div id="health" class="health" role="list" aria-label="Systemstatus"></div>
+      <div id="health-detail" class="card health-detail" hidden aria-live="polite"></div>
+
+      <article class="card" aria-labelledby="timeline-title">
+        <div class="card-head">
+          <div>
+            <h2 id="timeline-title">Igår · Nu · Imorgon</h2>
+            <p class="sub" id="timeline-sub">Uppmätt historik till vänster, prognos till höger.</p>
+          </div>
+          <div class="segmented" role="group" aria-label="Hur långt bakåt">
+            <button type="button" data-back="12" aria-pressed="false">12 h</button>
+            <button type="button" data-back="24" aria-pressed="true">24 h</button>
+            <button type="button" data-back="48" aria-pressed="false">48 h</button>
+          </div>
+        </div>
+        <div id="timeline" class="timeline"></div>
+      </article>
+
+      <div class="home-grid lower">
+        <article class="card" aria-labelledby="chain-title">
+          <h2 id="chain-title">Värmekedjan</h2>
+          <p class="sub">Appen styr värmen genom att ändra den utetemperatur som värmepumpen tror att det är.</p>
+          <div id="chain" class="chain"></div>
+          <details class="fold" id="pi-fold">
+            <summary>Så räknar regulatorn (PI)</summary>
+            <div id="pi-math"></div>
+          </details>
+        </article>
+        <article class="card" aria-labelledby="rooms-title">
+          <div class="card-head">
+            <h2 id="rooms-title">Rummen</h2>
+            <a class="link" href="#installningar/rum">Välj rum</a>
+          </div>
+          <div id="rooms" class="rooms"></div>
+        </article>
+      </div>
+    </section>
+
+    <!-- VÄDER -->
+    <section id="weather" class="view" hidden aria-labelledby="weather-title">
+      <div class="page-head"><h1 id="weather-title">Väder och sol</h1><p class="sub">Prognosen som husmodellen planerar efter.</p></div>
+      <div id="weather-status" class="status-row"></div>
+      <div id="hour-strip" class="hour-strip" tabindex="0" aria-label="Timprognos, rulla i sidled"></div>
+      <article class="card">
+        <h2>Kommande dygn</h2>
+        <div id="weather-chart" class="timeline"></div>
+      </article>
+      <article class="card">
+        <h2>Solceller</h2>
+        <p id="pv-now" class="big-fact"></p>
+        <div id="pv-chart" class="timeline"></div>
+      </article>
+      <details class="card fold">
+        <summary>Visa som tabell</summary>
+        <div class="table-wrap"><table><thead><tr><th>Tid</th><th>Ute</th><th>Moln</th><th>Solinstrålning</th><th>Solceller</th></tr></thead><tbody id="weather-rows"></tbody></table></div>
+      </details>
+    </section>
+
+    <!-- LÄRANDE -->
+    <section id="learning" class="view" hidden aria-labelledby="learning-title">
+      <div class="page-head"><h1 id="learning-title">Husmodellen lär sig</h1><p class="sub">Appen lär sig hur ditt hus reagerar på väder och värme. När modellen är tillräckligt bra visas styrförslag i skuggläge – de skickas aldrig till värmepumpen.</p></div>
+      <article class="card">
+        <ol id="journey" class="journey"></ol>
+        <p id="model-message"></p>
+        <ul id="model-reasons" class="reasons"></ul>
+      </article>
+      <article class="card">
+        <div class="card-head"><div><h2>Hur träffsäker är modellen?</h2><p class="sub">Medelfel i °C när modellen förutsäger innetemperaturen. Kortare stapel är bättre. Strecket visar kravet 0,35 °C.</p></div></div>
+        <div id="accuracy"></div>
+      </article>
+      <article class="card">
+        <div class="card-head">
+          <div><h2>Höll prognosen?</h2><p class="sub">Jämför ett arkiverat skuggförslag med vad som sedan mättes. Visar prognosfel – inte hur huset hade reagerat på andra kommandon.</p></div>
+          <button type="button" id="shadow-evaluate">Jämför senaste</button>
+        </div>
+        <p id="shadow-status" role="status"></p>
+        <div id="shadow-stats" class="stat-row"></div>
+        <div id="shadow-chart" class="timeline"></div>
+        <details class="fold" id="shadow-table-fold" hidden>
+          <summary>Visa timrader</summary>
+          <div class="table-wrap"><table><thead><tr><th>Horisont</th><th>Väderprognos</th><th>Uppmätt ute</th><th>Solcellsprognos</th><th>Uppmätt produktion</th><th>Inneprognos</th><th>Uppmätt inne</th><th>Föreslagen signal</th></tr></thead><tbody id="shadow-rows"></tbody></table></div>
+        </details>
+      </article>
+      <article class="card">
+        <div class="card-head"><div><h2>Exportera</h2><p class="sub">ZIP med råhistorik, modellernas timvärden och senaste valideringsstatus. Tidsstämplar i UTC.</p></div><button type="button" id="export-model-history">Exportera modellhistorik</button></div>
+        <p id="export-status" role="status"></p>
+      </article>
+      <details class="card fold" id="import-fold">
+        <summary>Utvärdera äldre historik från CSV (avancerat)</summary>
+        <p class="sub">Kolumner: entity_id, state, last_changed. Tidsstämplar ska innehålla tidszon. Filen ändras inte och den importerade modellen aktiveras aldrig automatiskt.</p>
+        <div class="file-row"><label class="file"><span>Välj CSV-fil (högst 20 MB)</span><input id="file" type="file" accept=".csv,text/csv"></label><button id="inspect" type="button" class="primary">Granska fil</button></div>
+        <p id="history-status" role="status"></p>
+        <div class="table-wrap"><table id="history-table" hidden><thead><tr><th>Entitet</th><th>Rader</th><th>Första värde</th><th>Sista värde</th><th>Ogiltiga</th><th>Största lucka</th></tr></thead><tbody></tbody></table></div>
+        <div id="model-panel" hidden>
+          <h3>Anpassa och validera</h3>
+          <p class="sub">De första 70 % av kompletta timmar används för anpassning, resten för validering. Datum i UTC.</p>
+          <div class="field"><span class="field-label">Historiska rumsgivare</span><div id="model-indoor-picker"></div></div>
+          <div class="form-grid">
+            <label class="field"><span class="field-label">Verklig utetemperatur</span><select id="model-outdoor"></select></label>
+            <label class="field"><span class="field-label">Historisk beräknad utetemperatur</span><select id="model-signal"></select></label>
+            <label class="field"><span class="field-label">Från datum</span><input id="model-start" type="date"></label>
+            <label class="field"><span class="field-label">Till datum</span><input id="model-end" type="date"></label>
+          </div>
+          <button id="evaluate-model" type="button" class="primary">Anpassa och validera offline</button>
+          <p id="model-status" role="status"></p>
+          <p id="model-saved" role="status" class="fineprint"></p>
+          <div id="model-accuracy"></div>
+        </div>
+      </details>
+    </section>
+
+    <!-- INSTÄLLNINGAR -->
+    <section id="settings" class="view" hidden aria-labelledby="settings-title">
+      <div class="page-head"><h1 id="settings-title">Inställningar</h1><p class="sub" id="ha-connection">Ansluter till Home Assistant…</p></div>
+      <div class="settings-layout">
+        <nav class="section-nav" aria-label="Avsnitt">
+          <a href="#installningar/lage">Läge</a><a href="#installningar/komfort">Komfort</a><a href="#installningar/rum">Rum</a><a href="#installningar/system">Värmesystem</a><a href="#installningar/vader">Väder & sol</a><a href="#installningar/styrning">Aktiv styrning</a><a href="#installningar/avancerat">Avancerat</a>
+        </nav>
+        <form id="settings-form" novalidate>
+          <fieldset class="card section" id="s-lage"><legend><h2>Läge</h2></legend>
+            <div class="choice-cards" role="radiogroup" aria-label="Körläge">
+              <label class="choice"><input type="radio" name="mode" value="demo"><span><strong>Demo</strong><small>Simulerat hus och väder. Bra för att titta runt. Inga givare behövs och inget loggas.</small></span></label>
+              <label class="choice"><input type="radio" name="mode" value="shadow"><span><strong>Skuggläge</strong><small>Läser dina riktiga givare, loggar och låter husmodellen lära sig. Skickar ingenting till värmepumpen förrän du själv startar aktiv styrning.</small></span></label>
+            </div>
+          </fieldset>
+
+          <fieldset class="card section" id="s-komfort"><legend><h2>Komfort</h2></legend>
+            <p class="sub">Komfortändringar gäller direkt och stoppar inte en aktiv styrning.</p>
+            <div class="comfort-editor">
+              <div class="comfort-bar" aria-hidden="true"><div id="comfort-band"></div><div id="comfort-target"></div></div>
+              <div class="form-grid three">
+                <label class="field"><span class="field-label">Lägsta</span><input id="comfort_min" type="number" min="7" max="35" step="0.1" inputmode="decimal"><small>°C</small></label>
+                <label class="field"><span class="field-label">Önskad</span><input id="target" type="number" min="7" max="35" step="0.1" inputmode="decimal"><small>°C</small></label>
+                <label class="field"><span class="field-label">Högsta</span><input id="comfort_max" type="number" min="7" max="35" step="0.1" inputmode="decimal"><small>°C</small></label>
+              </div>
+            </div>
+            <div class="field"><span class="field-label">Termostater som följer önskad temperatur</span><small class="help">Appens värde skrivs till valda termostater varje minut i skuggläge. Välj inte värmepumpens egen termostat om den ska reglera självständigt.</small><div data-picker="target_climates"></div></div>
+          </fieldset>
+
+          <fieldset class="card section" id="s-rum"><legend><h2>Rum</h2></legend>
+            <div class="field"><span class="field-label">Rum som styr värmen</span><small class="help">Medelvärdet av dessa rum jämförs med din önskade temperatur. Alla väger lika.</small><div data-picker="indoor"></div></div>
+            <div class="field"><span class="field-label">Rum som bara följs</span><small class="help">Visas och loggas men påverkar inte styrningen – t.ex. källare eller sovrum.</small><div data-picker="observe"></div></div>
+          </fieldset>
+
+          <fieldset class="card section" id="s-system"><legend><h2>Värmesystem</h2></legend>
+            <div class="field"><span class="field-label">Verklig utetemperatur</span><small class="help">En riktig utegivare – inte värmepumpens.</small><div data-picker="outdoor"></div></div>
+            <div class="field"><span class="field-label">Ohmigo · inställd temperatur</span><small class="help">Number-entiteten som Ohmigo använder. Läses i skuggläge och blir utgång om du startar aktiv styrning. Värdet är ingen kvittens från värmepumpen.</small><div data-picker="applied_signal"></div></div>
+            <div class="field"><span class="field-label">Värmepumpens avlästa utetemperatur <em>valfri</em></span><small class="help">Det pumpen faktiskt uppfattar efter Ohmigo. Bara för uppföljning.</small><div data-picker="pump_outdoor"></div></div>
+            <div class="form-grid">
+              <div class="field"><span class="field-label">Framledning <em>valfri</em></span><div data-picker="supply"></div></div>
+              <div class="field"><span class="field-label">Retur <em>valfri</em></span><div data-picker="return"></div></div>
+            </div>
+          </fieldset>
+
+          <fieldset class="card section" id="s-vader"><legend><h2>Väder & sol</h2></legend>
+            <div class="field"><span class="field-label">Väderprognos</span><small class="help">En väderentitet med timprognos. Molnighet loggas automatiskt om den finns – ingen extra solsensor krävs.</small><div data-picker="weather"></div></div>
+            <h3>Har du solpaneler?</h3>
+            <p class="sub">Välj båda fälten eller lämna båda tomma.</p>
+            <div class="field"><span class="field-label">Växelriktarens momentana produktion</span><small class="help">W eller kW – inte exporterad effekt eller dagens kWh.</small><div data-picker="pv_power"></div></div>
+            <div class="field"><span class="field-label">Forecast.Solar-prognos för samma paneler</span><small class="help" id="pv-source-status">Söker installerade solprognoser…</small><div data-picker="pv_forecast"></div><button type="button" id="pv-refresh" class="ghost small">Sök prognoskällor igen</button></div>
+            <details class="fold"><summary>Egna solsensorer (avancerat)</summary>
+              <p class="sub">Bara om du redan har en mätande sensor. Välj högst en historisk solsignal totalt.</p>
+              <div class="field"><span class="field-label">Historisk solinstrålning W/m²</span><div data-picker="solar"></div></div>
+              <div class="field"><span class="field-label">Historisk molnighet %</span><div data-picker="cloud"></div></div>
+            </details>
+          </fieldset>
+
+          <fieldset class="card section" id="s-styrning"><legend><h2>Aktiv styrning</h2></legend>
+            <p class="sub">Förberedelser innan appen får skriva till Ohmigo. Att spara här startar aldrig styrningen – det gör du själv på Hem.</p>
+            <ol class="prep">
+              <li><div class="field"><span class="field-label">Den gamla styrande automationen</span><small class="help">Måste vara avstängd. Appen kontrollerar det före varje skrivning.</small><div data-picker="old_automation"></div></div></li>
+              <li><label class="field"><span class="field-label">Verifierad watchdog-timeout</span><span class="with-unit"><input id="watchdog_seconds" type="number" min="0" max="86400" step="1" inputmode="numeric"><span>sekunder</span></span><small class="help">Minst 600. Kommandon skickas var femte minut, även oförändrade.</small></label></li>
+              <li><label class="check"><input id="watchdog_verified" type="checkbox"><span>Jag har verifierat på hårdvaran att uteblivna kommandon ger fallback till riktig utegivare och att upprepade oförändrade kommandon håller timern vid liv.</span></label></li>
+              <li><label class="check"><input id="exclusive_writer_confirmed" type="checkbox"><span>Jag har stängt av alla andra som skriver till samma utgång.</span></label></li>
+              <li><label class="check"><input id="auto_restart" type="checkbox"><span>Återuppta automatiskt efter omstart när givare och utgång är redo. <small>Kräver giltiga värden högst 24 h gamla och två godkända kontroller. Manuellt stopp tar bort önskemålet.</small></span></label></li>
+            </ol>
+            <p class="callout">Stopp betyder att kommandon upphör. Ingen återgångssignal skickas – Ohmigos verifierade watchdog måste ta över.</p>
+          </fieldset>
+
+          <fieldset class="card section" id="s-avancerat"><legend><h2>Avancerat</h2></legend>
+            <p class="sub">Ändringar här stoppar en aktiv styrning och kräver ny aktivering. Startvärdena är exempel, inte injusterade för ditt hus.</p>
+            <h3>PI-regulator</h3>
+            <div class="form-grid">
+              <label class="field"><span class="field-label">Kp</span><span class="with-unit"><input id="pi_kp" type="number" min="0" max="20" step="0.1" inputmode="decimal"><span>°C per °C fel</span></span></label>
+              <label class="field"><span class="field-label">Ki</span><span class="with-unit"><input id="pi_ki" type="number" min="0" max="5" step="0.01" inputmode="decimal"><span>°C per °C·h</span></span></label>
+              <label class="field"><span class="field-label">Maximal kompensation</span><span class="with-unit"><input id="pi_limit" type="number" min="0.1" max="30" step="0.1" inputmode="decimal"><span>°C</span></span></label>
+              <label class="field"><span class="field-label">Maximal signaländring</span><span class="with-unit"><input id="pi_rate" type="number" min="0.1" max="20" step="0.1" inputmode="decimal"><span>°C per timme</span></span></label>
+            </div>
+            <h3>Signalgränser</h3>
+            <div class="form-grid three">
+              <label class="field"><span class="field-label">Lägsta signal</span><span class="with-unit"><input id="signal_min" type="number" min="-40" max="50" step="0.5" inputmode="decimal"><span>°C</span></span></label>
+              <label class="field"><span class="field-label">Högsta signal</span><span class="with-unit"><input id="signal_max" type="number" min="-40" max="50" step="0.5" inputmode="decimal"><span>°C</span></span></label>
+              <label class="field"><span class="field-label">Största ändring</span><span class="with-unit"><input id="max_step" type="number" min="0.1" max="5" step="0.1" inputmode="decimal"><span>°C per timme</span></span></label>
+            </div>
+          </fieldset>
+        </form>
+      </div>
+      <div id="savebar" class="savebar" hidden role="region" aria-label="Osparade ändringar">
+        <div><strong id="savebar-title">Osparade ändringar</strong><span id="savebar-detail"></span></div>
+        <div class="actions"><button type="button" id="discard" class="ghost">Ångra</button><button type="button" id="save" class="primary">Spara</button></div>
+      </div>
+    </section>
+
+    <footer>MPC Heat Controller · Förhandsversion 0.16.0 · Lokal drift</footer>
+  </main>
+
+  <nav class="tabbar" aria-label="Huvudmeny, mobil">
+    <a href="#hem" data-view="home"><span data-icon="home"></span>Hem</a>
+    <a href="#vader" data-view="weather"><span data-icon="weather"></span>Väder</a>
+    <a href="#lararande" data-view="learning"><span data-icon="learning"></span>Lärande</a>
+    <a href="#installningar" data-view="settings"><span data-icon="settings"></span>Inställningar</a>
+  </nav>
+</div>
+
+<dialog id="start-dialog" aria-labelledby="start-title">
+  <form method="dialog">
+    <h2 id="start-title">Starta aktiv värmestyrning?</h2>
+    <ul id="start-facts" class="bullets"></ul>
+    <ul id="start-checks" class="checklist"></ul>
+    <p id="start-blocked" class="field-error" hidden>Åtgärda punkterna ovan under <a href="#installningar/styrning" id="start-fix">Inställningar → Aktiv styrning</a> innan du kan starta.</p>
+    <p class="callout warn">Den gamla automationen och alla andra skrivare måste vara avstängda. Vid stopp upphör kommandona och Ohmigos verifierade watchdog måste återgå till riktig utegivare.</p>
+    <div class="actions end">
+      <button value="cancel" id="start-cancel" autofocus>Avbryt</button>
+      <button value="confirm" id="start-confirm" class="primary">Ja, starta styrningen</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toasts" class="toasts" aria-live="polite"></div>
+<script src="app.js"></script>
+<script src="charts.js"></script>
+<script src="views.js"></script>
+</body>
+</html>

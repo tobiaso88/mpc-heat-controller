@@ -1,3 +1,11 @@
+# 0.16.0
+
+- Nytt gränssnitt med vyerna Hem, Väder, Lärande och Inställningar, flikrad på mobil samt ljust och mörkt tema.
+- Hem visar innetemperatur mot komfortområdet med klartextbesked, snabbjustering av önskad temperatur, styrkort med checklista inför aktiv PI, statusrad, tidslinjen Igår · Nu · Imorgon, värmekedjan och PI-beräkningen steg för steg.
+- Inställningarna är uppdelade i avsnitt med sökbara givarväljare som visar aktuella värden, validering före sparande och en spara-list som varnar när en ändring stoppar aktiv styrning.
+- Lärande visar modellens framsteg, träffsäkerhet mot kvalitetskravet och jämförelse av skuggförslag som graf.
+- API, regulator, kvalitetskrav och säkerhetsspärrar är oförändrade.
+
 # 0.15.9
 
 - Rättar versionsnumret i gränssnittets sidfot så att det matchar appens version i `config.yaml`. Innehåller även Forecast.Solar-korrigeringen från 0.15.8.

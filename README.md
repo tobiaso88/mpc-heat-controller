@@ -2,6 +2,10 @@
 
 Home Assistant-app för komfortvärme med eget webbgränssnitt, PI och experimentell modellutvärdering. Mål: HA OS 2026.9.1, Raspberry Pi 4 aarch64, 8 GB.
 
+## Version 0.16.0
+
+- Helt nytt, mer lättanvänt gränssnitt: Hem med komfortratt och tidslinje för historik och prognos, värmekedjan, statusrad, avsnittsindelade inställningar med sökbara givarväljare, mobil flikrad och mörkt tema. Styrningens API och säkerhetsspärrar är oförändrade.
+
 ## Version 0.15.3
 
 - Översikten visar nu växelriktarens senast uppmätta effekt och en separat kurva över uppmätt produktion. Forecast.Solar-grafen hämtar sina timvärden direkt från vald källa och visar orsaken när de saknas.

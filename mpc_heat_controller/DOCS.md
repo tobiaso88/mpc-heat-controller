@@ -1,4 +1,4 @@
-# MPC Heat Controller 0.15.3
+# MPC Heat Controller 0.16.0
 
 ## Grundläge och aktiv PI
 
@@ -10,7 +10,7 @@ Appen börjar alltid utan skrivning. Om automatisk återstart är vald och PI ti
 2. Ställ in PI och absoluta signalgränser. Startvärden Kp=2 och Ki=0,1 är exempel, inte injusterade parametrar.
 3. Verifiera på hårdvaran att uteblivna temperaturkommandon ger fallback till riktig utegivare och att upprepade oförändrade kommandon håller watchdog vid liv. Ange den verifierade timeouten i sekunder, minst 600. Programmet kan inte verifiera hårdvarans beteende åt dig.
 4. Stäng av gamla MQTT-automationen och alla andra skrivare. Välj automationen i guiden. Appen kontrollerar att den är avstängd inför varje skrivning; andra skrivare kan inte säkert upptäckas.
-5. Spara. På översikten väljer du Aktivera PI-styrning och bekräftar verklig skrivning. Att installera eller spara aktiverar aldrig PI.
+5. Spara. På Hem väljer du Starta aktiv styrning och bekräftar verklig skrivning; bekräftelsen är spärrad tills förberedelserna i Inställningar → Aktiv styrning är uppfyllda. Att installera eller spara aktiverar aldrig PI.
 
 Aktiv PI kontrollerar varje minut och skriver via number.set_value tidigast 300 sekunder efter föregående sändning, även när temperaturen är oförändrad. Nätverks- och beräkningstid kan förlänga intervallet. Efter ett ändrat kommando får HA-entitetens tillstånd upp till 120 sekunder på sig att återspegla det nya värdet; ett annat värde stoppar fortfarande PI direkt. Utgången avrundas till närmaste 0,5 °C och följer appens absoluta gränser och ändringshastighet. Entiteten måste stödja halva grader. Vid ett startvärde utanför dessa steg kan första sändningen vänta tills hastighetsgränsen tillåter avrundningen. Små ändringar ackumuleras tills ett helt steg ryms inom ändringsgränsen. HA:s lyckade servicesvar och entitetstillstånd är inte kvittens från pumpen.
 
@@ -36,13 +36,13 @@ Appens mätlogg aggregeras automatiskt till timmedel för valda reglergivare, ut
 
 En godkänd automatisk modell används med aktuell timprognos för ett 24-timmars MPC-förslag i skuggläge. Förslaget och inomhusprognosen visas i gränssnittet men skickas aldrig till värmepumpen. Aktiv styrning fortsätter att använda PI.
 
-Historikvyn kan dessutom granska importerad CSV och jämföra enkel modell med fördröjningsmodell. Senaste lyckade CSV, givarval och resultat sparas separat i /data/model.sqlite. Alla modeller och horisonter använder gemensamma 24-timmarsfönster med sex timmars förhistorik. Träning använder första 70 procenten av kompletta timmar; senare data används för validering. Timmedel är aritmetiska, luckor fylls inte. Fördröjningsmodellen har fast ridge=0,01.
+Vyn Lärande kan dessutom granska importerad CSV och jämföra enkel modell med fördröjningsmodell. Senaste lyckade CSV, givarval och resultat sparas separat i /data/model.sqlite. Alla modeller och horisonter använder gemensamma 24-timmarsfönster med sex timmars förhistorik. Träning använder första 70 procenten av kompletta timmar; senare data används för validering. Timmedel är aritmetiska, luckor fylls inte. Fördröjningsmodellen har fast ridge=0,01.
 
 Historiska framtida väder- och styrvärden används i offlineutvärderingen, inte historiska väderprognoser. Detta är en kandidatkontroll och inte ett oberoende fälttest av MPC-styrning. Egna HA-entiteter finns via MQTT Discovery enligt nedan.
 
 ## Automatisk återstart i 0.7.0
 
-Kryssa i automatisk återstart i Förbered aktiv PI, spara och aktivera PI en gång. Att kryssa i eller spara startar aldrig styrningen på egen hand. Inställningen är av som standard vid uppgradering.
+Kryssa i automatisk återstart under Inställningar → Aktiv styrning, spara och aktivera PI en gång. Att kryssa i eller spara startar aldrig styrningen på egen hand. Inställningen är av som standard vid uppgradering.
 
 Efter omstart eller tillfälligt avbrott krävs tillgängliga och giltiga värden från alla reglergivare, utegivaren och vald framledning/retur. Rapporttiden får vara högst 24 timmar gammal och värdet får inte vara markerat som återställt. En ny rapport efter appens omstart krävs inte; oförändrade temperaturer accepteras. HA:s last_reported används om den finns, annars last_updated. Givarna måste vara giltiga i två kontroller med minst 60 sekunders mellanrum. Under hela väntan skickas inga kommandon. Ohmigo måste ha ett tillgängligt numeriskt tillstånd med rätt metadata, den gamla automationen måste vara avstängd och watchdogvillkoren uppfyllda. Uppföljningsrum och väderprognos behövs inte för PI och blockerar inte start. HA:s entitetstillstånd är inte ett oberoende bevis på pumpens eller MQTT-brokerns fysiska tillgänglighet. Watchdog behövs fortfarande.
 
@@ -58,7 +58,7 @@ Sjutton sensorer skapas: PI-status, termostatsynkning, Grundläge, Börvärde, M
 
 ## Gemensamt börvärde för rumstermostater i 0.11.0
 
-Under Din komfort kan du välja noll eller flera `climate`-entiteter som ska följa appens börvärde. Inget väljs automatiskt. I skuggläge kontrollerar appen deras `temperature`-börvärde varje minut och använder `climate.set_temperature` när ett valt värde avviker. Synkningen fortsätter även om PI-styrningen är stoppad, eftersom valet är en separat uttrycklig behörighet. Demoläge skriver aldrig till termostater.
+Under Inställningar → Komfort kan du välja noll eller flera `climate`-entiteter som ska följa appens börvärde. Inget väljs automatiskt. I skuggläge kontrollerar appen deras `temperature`-börvärde varje minut och använder `climate.set_temperature` när ett valt värde avviker. Synkningen fortsätter även om PI-styrningen är stoppad, eftersom valet är en separat uttrycklig behörighet. Demoläge skriver aldrig till termostater.
 
 Synkningen är enkelriktad: appens börvärde är master. En manuell ändring på en vald termostat skrivs därför tillbaka till appens värde vid nästa kontroll. Ändringar av börvärde, komfortintervall och valda följartermostater kan sparas utan att aktiv PI stoppas; I-delen nollställs när komfortmålet ändras. Andra tekniska inställningsändringar kräver fortfarande ny aktivering. Värmepumpens egen climate-entitet bör lämnas omarkerad om den ska fortsätta reglera självständigt. En otillgänglig termostat eller misslyckad skrivning visas som warning men stoppar inte PI:s separata Ohmigo-styrning.
 
@@ -67,6 +67,19 @@ Publiceringen kör i egen tråd ungefär varje minut. Discovery-konfiguration be
 Senast skickat värde är ett historiskt kommando till HA, inte kvittens från Ohmigo eller pumpen. Det behålls vid stopp inom samma appkörning men är otillgängligt efter omstart tills nästa kommando skickats. PI-demovärden publiceras inte. Enhetsidentiteten sparas i /data/entities.sqlite; radera inte filen om du vill behålla samma entiteter.
 
 Ett fel i publiceringen visas i webbgränssnittet och påverkar inte PI-loopen. Rapport om lyckad publicering betyder att HA accepterade MQTT-anropet, inte att appen kontrollerat entitetsregistret. Verifiera att enheten syns i HA efter första installationen.
+
+## Gränssnittet i 0.16.0
+
+Gränssnittet har fyra vyer: **Hem**, **Väder**, **Lärande** och **Inställningar**. På mobil finns de i en flikrad längst ned. Ljust och mörkt tema följer enhetens inställning.
+
+- **Hem** visar innetemperaturen mot komfortområdet, ett klartextbesked och önskad temperatur med −/+. Snabbjusteringen flyttar hela komfortområdet 0,5 °C och sparas efter en kort paus; den räknas som en komfortändring och stoppar inte aktiv PI. Styrkortet visar läge, senast skickat kommando samt PI- och MPC-förslag. Start öppnar en dialog med förberedelserna som checklista; Stoppa visas när styrningen är aktiv, väntar på återstart eller när status inte kan läsas.
+- Statusraden sammanfattar givare, väder, solprognos, husmodell, termostatsynk, HA-sensorer och loggning. Tryck på en ruta för detaljer.
+- Tidslinjen **Igår · Nu · Imorgon** visar uppmätt historik (12/24/48 h) och prognos för kommande dygn på samma tidsaxel. Streckade kurvor är prognoser eller förslag som inte skickas. Kurvor kan döljas via förklaringen.
+- **Värmekedjan** visar verklig ute, Ohmigos värde, framledning/retur och inne, samt om skillnaden ger mer eller mindre värme. Under den visas PI-beräkningen steg för steg.
+- **Lärande** visar modellens steg (samla data, kvalitetskontroll, skuggförslag), träffsäkerhet per horisont mot kravet 0,35 °C, jämförelse av skuggförslag, export och CSV-utvärdering.
+- **Inställningar** är uppdelad i avsnitt med sökbara givarväljare som visar aktuellt värde. En spara-list visar vilka fält som ändrats och varnar om sparandet stoppar aktiv styrning.
+
+API:et är oförändrat. Tider visas i Home Assistants tidszon och tal med decimalkomma.
 
 ## Grafer och mobilgränssnitt i 0.9.5
 
@@ -82,7 +95,7 @@ Välj vid behov **Värmepumpens avlästa utetemperatur (valfri)** i Inställning
 
 Appen läser faktisk `weather.get_forecasts`-respons för vald timväderentitet. `temperature` krävs. `cloud_coverage` (%) och det leverantörsspecifika `solar_irradiance` (W/m²) tas med endast när de finns och är giltiga. Gränssnittet visar tillgängliga fält och markerar avsaknad av solinstrålningsprognos. Home Assistants generella prognosformat dokumenterar `cloud_coverage`, men garanterar inte solinstrålning. Vald väderentitets verkliga stöd måste därför kontrolleras i appen; källan kan inte identifieras från denna kodbas.
 
-Om du redan har solpaneler kan du i installationsguiden välja växelriktarens **momentana solcellsproduktion** (W eller kW) och motsvarande **Forecast.Solar-källa**. Installerade Forecast.Solar-källor visas i appen även innan Energipanelen är klar; välj källa eller tryck Uppdatera prognoskällor. För att läsa timprognosen måste den valda källan kopplas till solproduktionen i Home Assistants Energipanel. Appen läser då Energipanelens timvärden (`energy/solar_forecast`, Wh per timme) och omvandlar dem till genomsnittlig effekt i W. En totalsensor i kWh eller nätets exporteffekt är inte rätt historiskt underlag. Forecast.Solar kan utelämna nattens nollproduktion. Appen kompletterar då nattimmar med 0 W mellan sista timmen i en dagsprognos och första timmen i nästa dagsprognos. Båda dagarna måste ha minst tre sammanhängande timvärden, datumen måste följa på varandra i källans tidszon, den sista timmen måste vara efter eller vid kl. 12 och nästa dags första timme före eller vid kl. 12. Avståndet mellan gränstimmarna måste vara 6–18 timmar. Detta är en begränsad tolkning av källans dygnsprognoser, inte en astronomisk beräkning. Luckor inne i dagsprognosen, ogiltiga källvärden eller saknade prognosdygn fylls inte på detta sätt, och prognosens tidsomfång utökas inte. En utelämnad nollpunkt vid lokal midnatt återställs även mellan två kända närliggande timmar. Utan 24 matchande timvärden används den validerade temperaturmodellen i skuggläge om den klarat kvalitetskontrollen; annars visas inget MPC-förslag.
+Om du redan har solpaneler kan du under Inställningar → Väder & sol välja växelriktarens **momentana solcellsproduktion** (W eller kW) och motsvarande **Forecast.Solar-källa**. Installerade Forecast.Solar-källor visas i appen även innan Energipanelen är klar; välj källa eller tryck Uppdatera prognoskällor. För att läsa timprognosen måste den valda källan kopplas till solproduktionen i Home Assistants Energipanel. Appen läser då Energipanelens timvärden (`energy/solar_forecast`, Wh per timme) och omvandlar dem till genomsnittlig effekt i W. En totalsensor i kWh eller nätets exporteffekt är inte rätt historiskt underlag. Forecast.Solar kan utelämna nattens nollproduktion. Appen kompletterar då nattimmar med 0 W mellan sista timmen i en dagsprognos och första timmen i nästa dagsprognos. Båda dagarna måste ha minst tre sammanhängande timvärden, datumen måste följa på varandra i källans tidszon, den sista timmen måste vara efter eller vid kl. 12 och nästa dags första timme före eller vid kl. 12. Avståndet mellan gränstimmarna måste vara 6–18 timmar. Detta är en begränsad tolkning av källans dygnsprognoser, inte en astronomisk beräkning. Luckor inne i dagsprognosen, ogiltiga källvärden eller saknade prognosdygn fylls inte på detta sätt, och prognosens tidsomfång utökas inte. En utelämnad nollpunkt vid lokal midnatt återställs även mellan två kända närliggande timmar. Utan 24 matchande timvärden används den validerade temperaturmodellen i skuggläge om den klarat kvalitetskontrollen; annars visas inget MPC-förslag.
 
 Växelriktare kan sluta rapportera när produktionen når noll på kvällen. Ett sparat nollvärde får därför vara högst 18 timmar gammalt när `sun.sun` har en högst 30 minuter gammal rapport som visar `below_horizon`. Återställda värden godtas inte. Under dagen eller utan färsk solstatus gäller fortfarande 30 minuter; samma gräns gäller alltid positiv produktion.
 
@@ -112,7 +125,7 @@ Temperaturmätningarna visar hur huset faktiskt reagerar på värme, utetemperat
 
 Automatisk träning kvalitetskontrollerar både `linear` och `lag6` och väljer den godkända kandidaten med lägst genomsnittlig MAE vid 6/12/24 h. Styrsignalens respons mäts genom ett bestående steg på +1 °C och rekursiv simulering: responsen får inte vara positiv vid vare sig 6 eller 12 h, och medelresponsen måste ligga mellan −6 och 0 °C per °C. Lag6 använder sex kompletta historiska timmar av rumstemperatur och signal, sedan simulerade värden genom planeringshorisonten. Saknas historiken visas inget lag6-förslag. Rapporter och orsaker med uppmätta värden sparas i status även vid underkännande och visas i gränssnittet. Mätlagring och matchning av givarval är oförändrade.
 
-I Historik → Automatisk modell hämtar **Exportera modellhistorik** en ZIP via `GET /api/model/export`. `measurements.csv` innehåller hela kvarvarande råloggen med kvalitet och dåvarande givarinställningar. `hourly_*.csv` innehåller kompletta UTC-timvärden för aktuella modellvarianter med samma urval som träningen. `model.json` beskriver givarval, uteslutna värden och senaste sparade modellresultat och status. Export fungerar även innan modellen klarat valideringen. Timvärden räknas från nuvarande logg; tidigare träningsunderlag kan ha hunnit rensas av 90-dagarsgränsen.
+I Lärande → Exportera hämtar **Exportera modellhistorik** en ZIP via `GET /api/model/export`. `measurements.csv` innehåller hela kvarvarande råloggen med kvalitet och dåvarande givarinställningar. `hourly_*.csv` innehåller kompletta UTC-timvärden för aktuella modellvarianter med samma urval som träningen. `model.json` beskriver givarval, uteslutna värden och senaste sparade modellresultat och status. Export fungerar även innan modellen klarat valideringen. Timvärden räknas från nuvarande logg; tidigare träningsunderlag kan ha hunnit rensas av 90-dagarsgränsen.
 
 Om en godkänd modell inte kan bygga en skuggplan visar status den konkreta orsaken, exempelvis antal saknade `pv_power`-timmar med första luckans tidsstämpel, för kort väderprognos eller saknad historiktimme för lag6. Samma orsaker returneras i `mpc.plan_blockers` i `/api/telemetry`. För en cachad väderprognos väljs 24 aktuella timmar efter att för gamla inledande timmar har hoppats över; fönstret måste fortfarande börja inom två timmar, ha giltiga timintervall och nå minst 22 timmar framåt.
 

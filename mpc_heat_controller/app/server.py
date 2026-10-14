@@ -161,7 +161,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/status":
                 c = config()
                 return self.reply(200, status(c, ha_states() if c["mode"] == "shadow" else {"entities": []}))
-            files = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"), "/ui.js": ("ui.js", "text/javascript"), "/style.css": ("style.css", "text/css")}
+            files = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"), "/charts.js": ("charts.js", "text/javascript"), "/views.js": ("views.js", "text/javascript"), "/style.css": ("style.css", "text/css")}
             if path in files:
                 name, kind = files[path]; return self.reply(200, (STATIC / name).read_bytes(), kind)
             self.reply(404, {"error": "Sidan finns inte"})
