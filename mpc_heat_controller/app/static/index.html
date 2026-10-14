@@ -218,7 +218,7 @@
           </fieldset>
 
           <fieldset class="card section" id="s-system"><legend><h2>Värmesystem</h2></legend>
-            <div class="field"><span class="field-label">Verklig utetemperatur</span><small class="help">En riktig utegivare – inte värmepumpens.</small><div data-picker="outdoor"></div></div>
+            <div class="field"><span class="field-label">Verklig utetemperatur</span><small class="help">En riktig utegivare – inte värmepumpens.</small><div data-picker="outdoor"></div><div id="outdoor-history" class="migrate" hidden></div></div>
             <div class="field"><span class="field-label">Ohmigo · inställd temperatur</span><small class="help">Number-entiteten som Ohmigo använder. Läses i skuggläge och blir utgång om du startar aktiv styrning. Värdet är ingen kvittens från värmepumpen.</small><div data-picker="applied_signal"></div></div>
             <div class="field"><span class="field-label">Värmepumpens avlästa utetemperatur <em>valfri</em></span><small class="help">Det pumpen faktiskt uppfattar efter Ohmigo. Bara för uppföljning.</small><div data-picker="pump_outdoor"></div></div>
             <div class="form-grid">
@@ -276,7 +276,7 @@
       </div>
     </section>
 
-    <footer>MPC Heat Controller · Förhandsversion 0.16.0 · Lokal drift</footer>
+    <footer>MPC Heat Controller · Förhandsversion 0.17.0 · Lokal drift</footer>
   </main>
 
   <nav class="tabbar" aria-label="Huvudmeny, mobil">

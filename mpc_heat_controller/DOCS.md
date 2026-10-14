@@ -1,4 +1,4 @@
-# MPC Heat Controller 0.16.0
+# MPC Heat Controller 0.17.0
 
 ## Grundläge och aktiv PI
 
@@ -80,6 +80,19 @@ Gränssnittet har fyra vyer: **Hem**, **Väder**, **Lärande** och **Inställnin
 - **Inställningar** är uppdelad i avsnitt med sökbara givarväljare som visar aktuellt värde. En spara-list visar vilka fält som ändrats och varnar om sparandet stoppar aktiv styrning.
 
 API:et är oförändrat. Tider visas i Home Assistants tidszon och tal med decimalkomma.
+
+## Byta utegivare och behålla historiken
+
+När du väljer en ny verklig utetemperatur under Inställningar → Värmesystem frågar appen vad som ska hända med historiken:
+
+- **Börja om insamlingen** (förval): husmodellen samlar en ny period på minst 250 kompletta timmar med den nya givaren. Den tidigare perioden finns kvar i loggen och kommer tillbaka om du byter tillbaka inom 90 dagar.
+- **Flytta historiken till den nya givaren**: tidigare mätningar från den gamla givaren märks om som den nya i appens mätlogg. Även arkiverade skuggförslag och den sparade modellens givarval uppdateras, så att modellen och skuggförslagen fortsätter utan ny insamling.
+
+Flytten ändrar inga värden. Mätte den gamla och den nya givaren olika, till exempel på grund av placering i sol, tränas modellen därefter på blandade mätningar. Kvalitetskontrollen gäller oförändrat och kan underkänna modellen. Varje omflyttad mätning får fältet `migrated_from`, och flytten loggas i tabellen `migrations`.
+
+Före flytten sparas säkerhetskopior av `measurements.sqlite` och `model.sqlite` i `/data/backups/`. De tre senaste behålls. Misslyckas något steg, även att spara inställningen, återställs båda databaserna. Flytten nekas om den nya givaren redan finns i loggen under den gamla givarens period, eller om den gamla givaren även hade en annan roll. Byte av utegivare är en teknisk ändring och stoppar aktiv PI som tidigare.
+
+API: `POST /api/outdoor/migrate` med `{"config": {...}, "confirm": true}`.
 
 ## Grafer och mobilgränssnitt i 0.9.5
 

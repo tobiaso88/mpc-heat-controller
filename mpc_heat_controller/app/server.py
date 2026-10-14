@@ -20,6 +20,7 @@ from .history_export import build as export_history
 from .trends import read as read_trends
 from .shadow_evaluation import read as read_shadow_evaluation
 from .pv_forecast import energy_data, sources as pv_sources
+from .migration import migrate_outdoor, restore as restore_migration
 
 DATA = Path(os.environ.get("MPC_DATA", "./data"))
 STATIC = Path(__file__).parent / "static"
@@ -117,6 +118,17 @@ def inspect_csv(content):
                             max_gap_hours=max(gaps) if gaps else None))
     return {"entities": results, "message": "Filen är granskad, inte använd för träning. Inga luckor har fyllts."}
 
+def apply_config(c):
+    """Save settings; comfort-only changes keep active PI, everything else stops it. Caller holds cycle_lock."""
+    previous=config()
+    changed={key for key in c if c[key]!=previous[key]}
+    save(c)
+    if changed.issubset({'target','comfort_min','comfort_max','target_climates'}):
+        COLLECTOR.control.reconfigure_comfort(c)
+        if changed-{'target_climates'}:COLLECTOR.pi.reset()
+    else:
+        COLLECTOR.control.stop('Inställningar sparade. PI måste aktiveras igen för verklig styrning.')
+
 class Handler(BaseHTTPRequestHandler):
     def reply(self, code, data, kind="application/json", filename=None):
         body = json.dumps(data, ensure_ascii=False).encode() if kind == "application/json" else data
@@ -192,18 +204,25 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/config":
                 c = validate(json.loads(body))
                 if COLLECTOR:
-                    with COLLECTOR.cycle_lock:
-                        previous=config()
-                        changed={key for key in c if c[key]!=previous[key]}
-                        save(c)
-                        if changed.issubset({'target','comfort_min','comfort_max','target_climates'}):
-                            COLLECTOR.control.reconfigure_comfort(c)
-                            if changed-{'target_climates'}:COLLECTOR.pi.reset()
-                        else:
-                            COLLECTOR.control.stop('Inställningar sparade. PI måste aktiveras igen för verklig styrning.')
+                    with COLLECTOR.cycle_lock:apply_config(c)
                 else:save(c)
                 if COLLECTOR: COLLECTOR.wake.set()
                 return self.reply(200, c)
+            if self.path == "/api/outdoor/migrate":
+                payload=json.loads(body)
+                if payload.get('confirm') is not True:raise ValueError('Bekräfta att historiken ska flyttas')
+                c=validate(payload['config'])
+                lock=COLLECTOR.cycle_lock if COLLECTOR else LOCK
+                with lock:
+                    previous=config()
+                    result=migrate_outdoor(DATA,previous['outdoor'],c['outdoor'])
+                    try:
+                        apply_config(c) if COLLECTOR else save(c)
+                    except Exception:
+                        restore_migration(DATA,result['backups'])
+                        raise
+                if COLLECTOR: COLLECTOR.wake.set()
+                return self.reply(200,{'config':c,'migration':result})
             if self.path == "/api/history": return self.reply(200, inspect_csv(body))
             if self.path == "/api/model/evaluate":
                 payload = json.loads(body)

@@ -497,7 +497,7 @@ async function restoreModel() {
 }
 
 /* SETTINGS ================================================================= */
-let draft = null;
+let draft = null, outdoorChoice = 'restart';
 const unit = e => e.attributes?.unit_of_measurement;
 const isSensor = (e, units) => e.entity_id.startsWith('sensor.') && units.includes(unit(e));
 const PICKERS = {
@@ -576,6 +576,18 @@ function fillForm() {
   $('pv-source-status').textContent = state.pvMessage || '';
   changed();
 }
+function outdoorMigration() { return draft.mode === 'shadow' && !!state.settings.outdoor && !!draft.outdoor && draft.outdoor !== state.settings.outdoor; }
+function renderOutdoorHistory() {
+  const box = $('outdoor-history'), show = outdoorMigration();
+  box.hidden = !show;
+  if (!show) { outdoorChoice = 'restart'; return; }
+  const option = (value, title, text) => h('label', {class: 'choice'},
+    h('input', {type: 'radio', name: 'outdoor-history', value, checked: outdoorChoice === value, onchange: () => { outdoorChoice = value; changed(); }}),
+    h('span', {}, h('strong', {text: title}), h('small', {text})));
+  box.replaceChildren(h('strong', {text: 'Vad ska hända med historiken?'}),
+    option('restart', 'Börja om insamlingen', `Husmodellen samlar en ny period på minst ${MIN_HOURS} timmar med den nya givaren. Bäst om givarna mäter olika, t.ex. olika placering i sol.`),
+    option('migrate', 'Flytta historiken till den nya givaren', `Tidigare värden från ${entityName(state.settings.outdoor)} räknas som ${entityName(draft.outdoor)}. Modell och skuggförslag fortsätter direkt. Värdena ändras inte – mäter givarna olika blandas två givares mätningar. En säkerhetskopia tas först.`));
+}
 function changedKeys() { return Object.keys(draft).filter(k => JSON.stringify(draft[k]) !== JSON.stringify(state.settings[k])); }
 function validateDraft() {
   const errors = {};
@@ -602,6 +614,8 @@ function changed() {
   bar.dataset.tone = firstError || (!comfortOnly && active) ? 'warn' : '';
   $('save').disabled = !!firstError;
   renderComfortBar();
+  renderOutdoorHistory();
+  if (!firstError && outdoorMigration() && outdoorChoice === 'migrate') $('savebar-detail').textContent += ' · Historiken flyttas till den nya utegivaren.';
 }
 function renderComfortBar() {
   const lo = Math.min(15, draft.comfort_min - 1), hi = Math.max(27, draft.comfort_max + 1), pct = v => Math.max(0, Math.min(100, (v - lo) / (hi - lo) * 100)) + '%';
@@ -623,8 +637,14 @@ async function saveSettings() {
   const keys = changedKeys(), comfortOnly = keys.every(k => COMFORT_KEYS.includes(k)), wasActive = ['active', 'pending'].includes(controlState());
   $('save').disabled = true;
   try {
-    state.settings = await api('config', draft); draft = structuredClone(state.settings); fillForm();
-    toast(!comfortOnly && wasActive ? 'Inställningarna är sparade. Aktiv styrning stoppades – starta den igen på Hem.' : 'Inställningarna är sparade.', {tone: !comfortOnly && wasActive ? 'err' : 'ok'});
+    let moved = null;
+    if (outdoorMigration() && outdoorChoice === 'migrate') {
+      const result = await api('outdoor/migrate', {config: draft, confirm: true});
+      state.settings = result.config; moved = result.migration;
+    } else state.settings = await api('config', draft);
+    draft = structuredClone(state.settings); outdoorChoice = 'restart'; fillForm();
+    toast((moved ? `Historiken är flyttad: ${num(moved.samples, 0)} mätningar och ${num(moved.forecasts, 0)} arkiverade förslag. Säkerhetskopia: ${moved.backup}. ` : 'Inställningarna är sparade. ')
+      + (!comfortOnly && wasActive ? 'Aktiv styrning stoppades – starta den igen på Hem.' : ''), {tone: !comfortOnly && wasActive ? 'err' : 'ok', timeout: moved ? 12000 : 5000});
     refresh();
   } catch (e) { toast(e.message, {tone: 'err'}); } finally { $('save').disabled = false; }
 }
@@ -635,7 +655,7 @@ function initSettings() {
   for (const r of document.querySelectorAll('input[name=mode]')) r.addEventListener('change', ev => { draft.mode = ev.target.value; changed(); });
   $('settings-form').addEventListener('submit', ev => { ev.preventDefault(); saveSettings(); });
   $('save').onclick = saveSettings;
-  $('discard').onclick = () => { draft = structuredClone(state.settings); fillForm(); };
+  $('discard').onclick = () => { draft = structuredClone(state.settings); outdoorChoice = 'restart'; fillForm(); };
   $('pv-refresh').onclick = async () => { $('pv-source-status').textContent = 'Söker installerade Forecast.Solar-källor…'; await loadPvSources(); $('pv-source-status').textContent = state.pvMessage; document.querySelectorAll('[data-picker=pv_forecast]').forEach(renderPicker); };
   window.addEventListener('beforeunload', ev => { if (changedKeys().length) { ev.preventDefault(); ev.returnValue = ''; } });
   const links = [...document.querySelectorAll('.section-nav a')];

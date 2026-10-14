@@ -1,3 +1,9 @@
+# 0.17.0
+
+- Vid byte av verklig utetemperatur kan historiken flyttas till den nya givaren. Mätloggen, arkiverade skuggförslag och den sparade modellens givarval uppdateras, så att husmodellen och skuggförslagen fortsätter utan ny insamling på 250 timmar. Värdena ändras inte.
+- Säkerhetskopior av `measurements.sqlite` och `model.sqlite` sparas i `/data/backups/` före flytten (de tre senaste behålls). Misslyckas något steg återställs båda databaserna.
+- Flytten nekas om den nya givaren redan finns i loggen under den gamla givarens period. Förvalet är fortfarande att börja om insamlingen, och byte av utegivare stoppar aktiv PI som tidigare.
+
 # 0.16.0
 
 - Nytt gränssnitt med vyerna Hem, Väder, Lärande och Inställningar, flikrad på mobil samt ljust och mörkt tema.

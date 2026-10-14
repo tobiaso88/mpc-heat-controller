@@ -386,6 +386,12 @@ input[aria-invalid=true]{border-color:var(--err);box-shadow:0 0 0 3px var(--err-
 .picker.multi .picker-panel{border-top:0;background:transparent}
 .picker-count{font-size:12.5px;color:var(--muted);margin:6px 2px 0}
 
+/* Outdoor history choice */
+.migrate{margin-top:10px;padding:14px;border-radius:var(--radius-s);background:var(--info-bg);display:grid;gap:8px}
+.migrate>strong{font-size:14.5px}
+.migrate .choice{background:var(--surface);padding:12px}
+.migrate .choice small{font-size:13px}
+
 /* Save bar */
 .savebar{position:sticky;bottom:16px;z-index:10;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin:6px 0 0 204px;padding:12px 14px 12px 20px;border-radius:18px;background:var(--ink);color:var(--surface);box-shadow:0 12px 40px rgb(0 0 0/.25);animation:rise .2s ease}
 @keyframes rise{from{transform:translateY(16px);opacity:0}}
