@@ -166,6 +166,63 @@ class AutoModelTests(unittest.TestCase):
             self.assertEqual(saved['report']['mapping']['pv_power'], 'sensor.pv')
             self.assertFalse(quality(saved['report']))
 
+    def test_update_retrains_a_recent_model_with_old_quality_version(self):
+        from app.auto_model import QUALITY_VERSION, mapping_for
+        from app.model import evaluate_points
+        with tempfile.TemporaryDirectory() as directory:
+            data = Path(directory)
+            config, start = self.make_log(data)
+            clock = start+timedelta(days=30)
+            points, info = local_points(data, mapping_for(config))
+            report = evaluate_points(points, mapping_for(config))
+            report['quality_version'] = QUALITY_VERSION-1
+            model_store.save_auto(data, report, {'state': 'ready', 'trained_at': clock.isoformat()})
+            with patch('app.auto_model.evaluate_points', wraps=evaluate_points) as evaluate:
+                AutoModel(data).maybe_train(config, clock)
+                evaluate.assert_called_once()
+            self.assertEqual(model_store.load_auto(data)['report']['quality_version'], QUALITY_VERSION)
+
+    def test_legacy_night_zeros_are_reused_without_rewriting_log(self):
+        from app.auto_model import mapping_for
+        from app.pv_history import STALE_PV
+        with tempfile.TemporaryDirectory() as directory:
+            data = Path(directory)
+            config = validate({'mode': 'shadow', 'indoor': ['sensor.room'], 'outdoor': 'sensor.out',
+                               'applied_signal': 'number.signal', 'pv_power': 'sensor.pv', 'pv_forecast': 'a'*32})
+            start = datetime(2026, 10, 1, 17, tzinfo=timezone.utc)
+            with sqlite3.connect(data/'measurements.sqlite') as db:
+                db.execute('CREATE TABLE samples(time TEXT PRIMARY KEY, readings TEXT, settings TEXT)')
+                for i in range(145):
+                    rows = [{'entity': entity, 'value': value, 'quality': 'OK'} for entity, value in
+                            [('sensor.room', 21.5), ('sensor.out', 5), ('number.signal', 0), ('sensor.pv', 0)]]
+                    if 0 < i < 144:
+                        rows[-1]['quality'] = STALE_PV
+                    if i == 144:
+                        rows[-1]['value'] = 50
+                    db.execute('INSERT INTO samples VALUES(?,?,?)',
+                               ((start+timedelta(minutes=5*i)).isoformat(), json.dumps(rows), json.dumps(config)))
+            points, info = local_points(data, mapping_for(config))
+            self.assertEqual(len(points), 13)
+            self.assertEqual(info['recovered_pv_zero_samples'], 143)
+            self.assertEqual(points[start+timedelta(hours=6)][3], 0)
+            with sqlite3.connect(data/'measurements.sqlite') as db:
+                raw = db.execute('SELECT readings FROM samples ORDER BY time LIMIT 1 OFFSET 1').fetchone()[0]
+            self.assertEqual(json.loads(raw)[-1]['quality'], STALE_PV)
+            # Selection changes still exclude the entire old log.
+            config['indoor'] = ['sensor.other']
+            self.assertEqual(local_points(data, mapping_for(config))[0], {})
+
+    def test_shadow_absolute_limit_still_requires_persistence_and_sign(self):
+        report = self.candidate_report()
+        for m in report['metrics']:
+            m.update(mae=0.34, lag_mae=0.34, baseline_mae=0.36)
+        self.assertTrue(select_model(report))
+        report['metrics'][0]['baseline_mae'] = 0.33
+        self.assertFalse(select_model(report))
+        report['metrics'][0]['baseline_mae'] = 0.36
+        report['metrics'][0].update(mae=0.351, lag_mae=0.351)
+        self.assertFalse(select_model(report))
+
     def test_pv_forecast_needs_matching_history_and_suggests_less_heat(self):
         config = validate({'pv_power': 'sensor.pv', 'pv_forecast': 'a' * 32})
         model = {'name': 'linear', 'coefficients': [0, 0, 0, -0.05, 0.0001],

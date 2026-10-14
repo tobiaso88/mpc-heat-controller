@@ -102,3 +102,26 @@ class TelemetryTests(unittest.TestCase):
             self.assertIsNone(readings(c,[s])[0]['value'])
             s['state']='5';s['attributes']['restored']=True
             self.assertNotEqual(readings(c,[s])[0]['quality'],'OK')
+
+    def test_old_pv_zero_requires_current_darkness_and_bounded_age(self):
+        t = datetime(2026, 10, 14, 2, tzinfo=timezone.utc)
+        c = validate({'pv_power': 'sensor.pv', 'pv_forecast': 'a'*32})
+        pv = {'entity_id': 'sensor.pv', 'state': '0',
+              'last_reported': (t-timedelta(hours=10)).isoformat(),
+              'attributes': {'unit_of_measurement': 'W'}}
+        sun = {'entity_id': 'sun.sun', 'state': 'below_horizon',
+               'last_updated': t.isoformat(), 'attributes': {}}
+        def quality(states):
+            return next(r['quality'] for r in readings(c, states) if r['entity'] == 'sensor.pv')
+        with patch('app.telemetry.now', return_value=t):
+            self.assertEqual(quality([pv, sun]), 'OK')
+            self.assertNotEqual(quality([pv]), 'OK')
+            self.assertNotEqual(quality([pv, dict(sun, state='above_horizon')]), 'OK')
+            self.assertNotEqual(quality([pv, dict(sun, last_updated=(t-timedelta(hours=1)).isoformat())]), 'OK')
+            self.assertNotEqual(quality([pv, dict(sun, attributes={'restored': True})]), 'OK')
+            self.assertNotEqual(quality([dict(pv, state='10'), sun]), 'OK')
+            self.assertNotEqual(quality([dict(pv, state='unavailable'), sun]), 'OK')
+            self.assertNotEqual(quality([dict(pv, attributes={'unit_of_measurement': 'W', 'restored': True}), sun]), 'OK')
+            self.assertNotEqual(quality([dict(pv, last_reported=(t-timedelta(hours=19)).isoformat()), sun]), 'OK')
+            self.assertNotEqual(quality([dict(pv, last_reported=(t+timedelta(minutes=2)).isoformat()), sun]), 'OK')
+            self.assertEqual(quality([dict(pv, state='10', last_reported=t.isoformat()), sun]), 'OK')

@@ -10,9 +10,12 @@ from datetime import datetime, timezone, timedelta
 from .model import evaluate_points
 from . import model_store
 from .comparison import features
+from .pv_history import recovered_zeros
 
+QUALITY_VERSION = 3
 QUALITY_HORIZONS = (6, 12, 24)
-MAX_MAE = 0.3
+# Absolute limit for display-only shadow proposals, still bounded by persistence.
+MAX_MAE = 0.35
 HARD_MAX_MAE = 0.8
 MIN_WINDOWS = 24
 RESPONSE_HOURS = 12
@@ -55,6 +58,7 @@ def local_points(data, mapping):
     wanted = mapping['indoor'] + [mapping['outdoor'], mapping['signal']] + ([mapping['solar']] if mapping.get('solar') else [mapping['cloud']] if mapping.get('cloud') else [mapping['pv_power']] if mapping.get('pv_power') else [])
     buckets = defaultdict(lambda: defaultdict(list))
     excluded = 0
+    pv_samples = []
     for stamp, raw_readings, raw_settings in rows:
         try:
             settings = json.loads(raw_settings)
@@ -71,7 +75,11 @@ def local_points(data, mapping):
             if moment.tzinfo is None:
                 raise ValueError()
             hour = moment.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
-            values = {r['entity']: r['value'] for r in json.loads(raw_readings)
+            readings = json.loads(raw_readings)
+            if mapping.get('pv_power'):
+                pv_samples.append((moment.astimezone(timezone.utc), next(
+                    (r for r in readings if r.get('entity') == mapping['pv_power']), {})))
+            values = {r['entity']: r['value'] for r in readings
                       if (r.get('quality') == 'OK' or r.get('entity') == mapping['signal'] and mapping['signal'].startswith('number.'))
                       and isinstance(r.get('value'), (int, float))
                       and not isinstance(r.get('value'), bool) and math.isfinite(r['value'])}
@@ -80,6 +88,9 @@ def local_points(data, mapping):
                     buckets[hour][entity].append(values[entity])
         except (ValueError, TypeError, KeyError, json.JSONDecodeError):
             excluded += 1
+    recovered = recovered_zeros(pv_samples)
+    for moment in recovered:
+        buckets[moment.replace(minute=0, second=0, microsecond=0)][mapping['pv_power']].append(0.0)
     points = {}
     for hour, entities in buckets.items():
         if all(entities.get(entity) for entity in wanted):
@@ -87,7 +98,7 @@ def local_points(data, mapping):
             points[hour] = (sum(mean(entity) for entity in mapping['indoor']) / len(mapping['indoor']),
                             mean(mapping['outdoor']), mean(mapping['signal'])) + ((mean(mapping['solar']),) if mapping.get('solar') else (mean(mapping['cloud']),) if mapping.get('cloud') else (mean(mapping['pv_power']),) if mapping.get('pv_power') else ())
     return points, {'samples': len(rows), 'incomplete_hours': len(buckets) - len(points),
-                    'excluded_samples': excluded}
+                    'excluded_samples': excluded, 'recovered_pv_zero_samples': len(recovered)}
 
 
 def _predict(model, values):
@@ -213,7 +224,7 @@ def quality(report, name=None):
 
 def select_model(report):
     checks = {m['name']: quality(report, m['name']) for m in report['models'] if m['name'] in ('linear', 'lag6')}
-    report['quality_version'] = 2
+    report['quality_version'] = QUALITY_VERSION
     report['quality_reasons'] = checks
     approved = [name for name, reasons in checks.items() if not reasons]
     report['selected_model'] = min(approved, key=lambda name: sum(
@@ -238,7 +249,7 @@ class AutoModel:
                 current_mapping = mapping_for(config, auto_cloud=True)
             if saved and saved.get('report') and saved['report'].get('mapping', {}).get('pv_baseline'):
                 current_mapping = mapping_for(config, pv_baseline=True)
-            same_model = bool(saved and (saved.get('status') or {}).get('state') == 'ready' and (saved.get('report') or {}).get('quality_version') == 2 and saved.get('report') and saved['report'].get('mapping') == current_mapping)
+            same_model = bool(saved and (saved.get('status') or {}).get('state') == 'ready' and (saved.get('report') or {}).get('quality_version') == QUALITY_VERSION and saved.get('report') and saved['report'].get('mapping') == current_mapping)
             interval = TRAIN_INTERVAL if same_model else CHECK_INTERVAL
             if self.last_check and clock-self.last_check < interval:
                 return
@@ -298,6 +309,7 @@ class AutoModel:
                         try:
                             pv_report = evaluate_points(pv_points, pv_mapping,
                                 incomplete_hours=pv_info['incomplete_hours'], source='local_log')
+                            pv_report['recovered_pv_zero_samples'] = pv_info.get('recovered_pv_zero_samples', 0)
                             status['evaluations']['pv'] = pv_report
                             if select_model(pv_report):
                                 if report:

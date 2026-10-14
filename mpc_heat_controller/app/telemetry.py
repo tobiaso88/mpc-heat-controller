@@ -6,6 +6,7 @@ import sqlite3
 import threading
 import urllib.request
 from .pi import PI
+from .pv_history import MAX_ZERO_AGE
 from .control import Control
 from .entities import EntityPublisher
 from .auto_model import AutoModel
@@ -53,6 +54,18 @@ def readings(c, states):
                 age = (now() - datetime.fromisoformat(stamp.replace('Z', '+00:00'))).total_seconds()
                 max_age = 1800 if entity == c.get('pv_power') else 86400
                 quality = 'OK' if -60 <= age <= max_age else ('Solcellsproduktionen är äldre än 30 minuter' if entity == c.get('pv_power') else 'Rapporttid utanför tillåtet intervall (högst 24 h)')
+                # A stopped inverter may retain its last zero through the night.
+                # Daytime zeros still require a recent production report.
+                if entity == c.get('pv_power') and value == 0 and 1800 < age <= MAX_ZERO_AGE.total_seconds():
+                    sun = by_id.get('sun.sun', {})
+                    try:
+                        solar_stamp = sun.get('last_reported') or sun.get('last_updated')
+                        solar_age = (now()-datetime.fromisoformat(solar_stamp.replace('Z', '+00:00'))).total_seconds()
+                        if (sun.get('state') == 'below_horizon' and not sun.get('attributes', {}).get('restored')
+                                and -60 <= solar_age <= 1800):
+                            quality = 'OK'
+                    except (ValueError, TypeError, AttributeError):
+                        pass
                 if attrs.get('restored'):quality='Återställt värde, väntar på rapport'
         except (ValueError, TypeError, KeyError, AttributeError):
             value = None

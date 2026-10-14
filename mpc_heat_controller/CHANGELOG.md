@@ -1,3 +1,10 @@
+# 0.15.6
+
+- Återanvänder sparade nollvärden från solcellsproduktion i sammanhängande platåer på 4–18 timmar, med färska värden på båda sidor. Saknade värden, återställda värden och gammal positiv effekt fylls inte i. Befintlig mätlogg skrivs inte om och givarurvalets matchning ändras inte.
+- Godtar framtida nattliga nollvärden som är högst 18 timmar gamla när en färsk `sun.sun` visar att solen är under horisonten. Positiv effekt och gamla nollvärden under dagen behåller 30-minutersgränsen.
+- Justerar absolut MAE-gräns för skuggförslag till 0,35 °C vid 6/12/24 timmar; minst 24 fönster, högst persistensens fel och rätt signalriktning krävs fortfarande. PI och aktiv styrning är oförändrade.
+- Uppdaterad kvalitetsversion tvingar omträning av tidigare godkända modeller vid nästa kontroll efter uppdatering.
+
 # 0.15.5
 
 - Lägger till Exportera modellhistorik under Historik → Automatisk modell.
