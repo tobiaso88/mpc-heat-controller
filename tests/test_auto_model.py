@@ -300,6 +300,17 @@ class AutoModelTests(unittest.TestCase):
         self.assertTrue(all(-15<=p['signal']<=30 and p['signal']*2==round(p['signal']*2) for p in solar))
         self.assertTrue(all(abs(b['signal']-a['signal'])<=1 for a,b in zip(solar,solar[1:])))
 
+    def test_warm_now_cold_night_starts_heating_in_time(self):
+        # A warm start rewards less heat first; the plan must still reach the cold night in time.
+        model={'name':'linear','coefficients':[0,0.02,0,-0.01],'means':[0,-7.5,0,16],'scales':[1]*4}
+        start=datetime.now(timezone.utc)+timedelta(minutes=10)
+        outside=[13.5-h for h in range(12)]+[1.5+h for h in range(12)]
+        forecast=[{'datetime':(start+timedelta(hours=h)).isoformat(),'temperature':t} for h,t in enumerate(outside)]
+        output={'state':'confirmed','min':-15,'max':30,'step':0.5}
+        plan=live_plan({'models':[model],'mapping':{}},22.3,13.5,forecast,validate({}),output)
+        self.assertEqual(len(plan),24)
+        self.assertGreater(min(p['indoor'] for p in plan),20.95)
+
     def candidate_report(self):
         return {'models': [
             {'name': name, 'coefficients': [0, 0, 0, -0.02] + ([0]*4 if name == 'lag6' else []),

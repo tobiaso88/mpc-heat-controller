@@ -194,7 +194,13 @@ def live_plan(report, indoor, applied, forecast, config, output=None, history=No
                         'indoor':round(predicted,3),'outdoor':round(outside,2),'signal':signal}],
                         {t: v for t, v in points.items() if t >= current-5*hour}))
             if not expanded: return reject('Ingen stabil signalbana ryms inom signalgränser och tillåten ändringstakt.')
-            candidates=sorted(expanded,key=lambda item:item[0])[:60]
+            # Keep the cheapest paths per signal level. A global top list prunes paths that
+            # start heating early for a cold night before their lower later cost shows.
+            kept={}
+            for item in sorted(expanded,key=lambda item:item[0]):
+                same=kept.setdefault(item[2],[])
+                if len(same)<3: same.append(item)
+            candidates=sorted((item for same in kept.values() for item in same),key=lambda item:item[0])
         return candidates[0][3]
     except (KeyError,TypeError,ValueError,OverflowError,StopIteration):
         return reject('Planeringen saknar giltiga modellvärden, historik eller prognosfält.')

@@ -1,3 +1,8 @@
+# 0.17.1
+
+- Rättar att MPC-skuggförslaget kunde låta innetemperaturen sjunka under komfortområdet inför en kall natt. Planeraren behöll bara de 60 billigaste banorna hittills, så banor som började värma tidigt sorterades bort när huset var varmt i början. Nu behålls de tre billigaste banorna per signalnivå. Med en prognos formad som en verklig kall natt höjdes lägsta prognostiserade innetemperatur från 19,4 till 20,8 °C med samma modell.
+- MPC:s timsteg begränsas som tidigare av det lägsta av *Största ändring* och PI:s *Maximal signaländring*. Kostnadsfunktion, kvalitetskrav, PI och skrivväg till Home Assistant är oförändrade.
+
 # 0.17.0
 
 - Vid byte av verklig utetemperatur kan historiken flyttas till den nya givaren. Mätloggen, arkiverade skuggförslag och den sparade modellens givarval uppdateras, så att husmodellen och skuggförslagen fortsätter utan ny insamling på 250 timmar. Värdena ändras inte.

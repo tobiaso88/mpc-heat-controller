@@ -1,4 +1,4 @@
-# MPC Heat Controller 0.17.0
+# MPC Heat Controller 0.17.1
 
 ## Grundläge och aktiv PI
 
@@ -120,7 +120,7 @@ Ingen separat solsensor krävs. Appen kan automatiskt logga aktuell molnighet fr
 
 `ready` kräver minst 24 valideringsfönster samt MAE högst 0,35 °C vid 6, 12 och 24 timmar och inte sämre än att hålla aktuell rumstemperatur konstant (fortsatt absolut tak 0,8 °C). Gränserna är en konservativ spärr mot svaga modeller, inte en garanti för driftprestanda. Valideringen använder **verkligt framtida väder** och historisk styrsignal, vilket ger modellen bättre väderinformation än den hade haft vid beslut. Några arkiverade `weather.get_forecasts`-svar från beslutstillfällena finns ännu inte; utvärdering mot **då tillgängliga prognoser** kan därför inte rapporteras eller användas som bevis för prognoskvalitet. Överlappande fönster är dessutom beroende.
 
-Planen kräver aktuell bekräftad `number`-utgång med gränser och steg som stöder 0,5 °C. Den begränsas till både entitetens och appens signalgränser, appens timsteg och PI:s ändringstakt per timme. Planen är fortfarande enbart visning; endast PI har skrivväg till Home Assistant och dess watchdogkrav gäller oförändrat.
+Planen kräver aktuell bekräftad `number`-utgång med gränser och steg som stöder 0,5 °C. Den begränsas till både entitetens och appens signalgränser, appens timsteg och PI:s ändringstakt per timme. Sökningen behåller de billigaste banorna för varje signalnivå, så att en bana som börjar värma tidigt inför en kall natt inte sorteras bort för att den kostar mer de första timmarna. Planen är fortfarande enbart visning; endast PI har skrivväg till Home Assistant och dess watchdogkrav gäller oförändrat.
 
 ## Arkiverad utvärdering av skuggförslag
 

@@ -2,6 +2,10 @@
 
 Home Assistant-app för komfortvärme med eget webbgränssnitt, PI och experimentell modellutvärdering. Mål: HA OS 2026.9.1, Raspberry Pi 4 aarch64, 8 GB.
 
+## Version 0.17.1
+
+- Inomhusprognosen på Hem börjar värma i tid inför kalla nätter i stället för att först föreslå mindre värme och sedan inte hinna ikapp. Bara förslaget ändras; PI-styrningen är oförändrad.
+
 ## Version 0.17.0
 
 - Byter du utegivare kan appen flytta historiken till den nya givaren, så att husmodellen och skuggförslagen fortsätter utan ny insamling. Säkerhetskopia tas först.
