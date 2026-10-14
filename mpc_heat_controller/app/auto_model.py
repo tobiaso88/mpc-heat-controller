@@ -9,6 +9,15 @@ from datetime import datetime, timezone, timedelta
 
 from .model import evaluate_points
 from . import model_store
+from .comparison import features
+
+QUALITY_HORIZONS = (6, 12, 24)
+MAX_MAE = 0.3
+HARD_MAX_MAE = 0.8
+MIN_WINDOWS = 24
+RESPONSE_HOURS = 12
+MIN_SIGNAL_RESPONSE = -6.0
+MAX_SIGNAL_RESPONSE = 0.0
 
 MIN_COMPLETE_HOURS = 250
 CHECK_INTERVAL = timedelta(hours=1)
@@ -100,13 +109,23 @@ def forecast_day(forecast):
     except (KeyError, TypeError, ValueError, AttributeError): return []
 
 
-def live_plan(report, indoor, applied, forecast, config, output=None):
+def live_plan(report, indoor, applied, forecast, config, output=None, history=None):
     """Display-only hourly plan; each signal is on the output's 0.5 °C grid."""
     day = forecast_day(forecast)
     if not report or indoor is None or applied is None or not day or not output or output.get('state') != 'confirmed':
         return []
     try:
-        model = next(m for m in report['models'] if m['name'] == 'linear')
+        model = next(m for m in report['models'] if m['name'] == report.get('selected_model', 'linear'))
+        lag = model['name'] == 'lag6'
+        hour = timedelta(hours=1)
+        start = datetime.fromisoformat(day[0]['datetime'].replace('Z', '+00:00')).replace(minute=0, second=0, microsecond=0)
+        past = {}
+        if lag:
+            history = history or {}
+            anchor = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+            for i in range(1, 7):
+                if anchor-i*hour not in history: return []
+                past[start-i*hour] = history[anchor-i*hour]
         solar = bool(report.get('mapping', {}).get('solar'))
         cloud = bool(report.get('mapping', {}).get('cloud'))
         field = 'solar_irradiance' if solar else 'cloud_coverage' if cloud else 'pv_power' if report.get('mapping', {}).get('pv_power') else None
@@ -115,60 +134,91 @@ def live_plan(report, indoor, applied, forecast, config, output=None):
         hi=min(float(output['max']),float(config['signal_max']))
         first=math.ceil(lo*2-1e-9);last=math.floor(hi*2+1e-9)
         if first>last or not lo<=applied<=hi: return []
-        candidates=[(0.0,float(indoor),float(applied),[])]
-        for row in day:
+        candidates=[(0.0,float(indoor),float(applied),[],past)]
+        for index, row in enumerate(day):
             outside=float(row['temperature']);expanded=[]
-            for cost, temperature, previous, path in candidates:
+            for cost, temperature, previous, path, previous_points in candidates:
                 allowance=min(float(config['max_step']),float(config['pi_rate']))
                 for tick in range(max(first,math.ceil((previous-allowance)*2-1e-9)),
                                   min(last,math.floor((previous+allowance)*2+1e-9))+1):
                     signal=tick/2
-                    features=[1.0,outside-temperature,temperature,signal]
-                    if field: features.append(float(row[field]))
-                    predicted=temperature+_predict(model,features)
+                    current = start+index*hour
+                    points = dict(previous_points)
+                    points[current] = (temperature, outside, signal) + ((float(row[field]),) if field else ())
+                    temperatures = {t: values[0] for t, values in points.items()}
+                    predicted=temperature+_predict(model,features(points,current,temperatures,lag))
                     if not math.isfinite(predicted) or abs(predicted)>100: continue
                     violation=max(config['comfort_min']-predicted,0,predicted-config['comfort_max'])
                     score=cost+(predicted-config['target'])**2+20*violation**2+0.02*(signal-previous)**2
                     expanded.append((score,predicted,signal,path+[{'datetime':row['datetime'],
-                        'indoor':round(predicted,3),'outdoor':round(outside,2),'signal':signal}]))
+                        'indoor':round(predicted,3),'outdoor':round(outside,2),'signal':signal}],
+                        {t: v for t, v in points.items() if t >= current-5*hour}))
             if not expanded: return []
             candidates=sorted(expanded,key=lambda item:item[0])[:60]
         return candidates[0][3]
     except (KeyError,TypeError,ValueError,OverflowError,StopIteration): return []
 
 
-def signal_effect(report):
-    """Indoor degrees per hour from one degree higher simulated outdoor signal."""
+def signal_effect(report, name='linear'):
+    """Mean cumulative response at 6 and 12 hours to a sustained +1 °C step."""
     try:
-        model = next(m for m in report['models'] if m['name'] == 'linear')
-        scale = float(model['scales'][3])
-        if not math.isfinite(scale) or scale <= 0:
-            return None
-        effect = float(model['coefficients'][3]) / scale
-        return effect if math.isfinite(effect) else None
-    except (KeyError, IndexError, TypeError, ValueError, ZeroDivisionError, StopIteration):
+        model = next(m for m in report['models'] if m['name'] == name)
+        hour = timedelta(hours=1)
+        start = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        responses = []
+        for step in (0, 1):
+            points = {start+i*hour: (21.5, 5.0, step if i >= 0 else 0.0) +
+                      ((0.0,) if any(report.get('mapping', {}).get(k) for k in ('solar', 'cloud', 'pv_power')) else ())
+                      for i in range(-6, RESPONSE_HOURS)}
+            temperatures = {start+i*hour: 21.5 for i in range(-6, 1)}
+            for i in range(RESPONSE_HOURS):
+                t = start+i*hour
+                temperatures[t+hour] = temperatures[t]+_predict(model, features(points, t, temperatures, name == 'lag6'))
+            responses.append([temperatures[start+i*hour] for i in (6, 12)])
+        effects = [b-a for a,b in zip(*responses)]
+        if not all(math.isfinite(e) for e in effects): return None
+        # A positive response at either horizon must never be averaged away.
+        return max(effects) if max(effects) > 0 else sum(effects)/len(effects)
+    except (KeyError, IndexError, TypeError, ValueError, ZeroDivisionError, StopIteration, OverflowError):
         return None
 
 
-def quality(report):
-    """Conservative oracle-weather gate; deployment forecast quality is still unknown."""
-    effect = signal_effect(report)
-    if effect is None or not -0.5 <= effect <= -0.001:
-        return False
-    if report.get('mapping', {}).get('pv_power'):
+def quality(report, name=None):
+    """Return rejection reasons; an empty list means the candidate passes."""
+    name = name or (report or {}).get('selected_model', 'linear')
+    reasons = []
+    effect = signal_effect(report, name)
+    if effect is None or not MIN_SIGNAL_RESPONSE <= effect <= MAX_SIGNAL_RESPONSE:
+        reasons.append(f'{name}: signalrespons vid 6–12 h = {effect}; kräver {MIN_SIGNAL_RESPONSE} ≤ respons ≤ {MAX_SIGNAL_RESPONSE} °C per °C.')
+    if (report or {}).get('mapping', {}).get('pv_power'):
         try:
-            model = next(m for m in report['models'] if m['name'] == 'linear')
-            pv_effect = float(model['coefficients'][4]) / float(model['scales'][4])
-            if not math.isfinite(pv_effect) or not 0 < pv_effect <= 0.001:
-                return False
-        except (KeyError, IndexError, TypeError, ValueError, ZeroDivisionError, StopIteration):
-            return False
-    metrics={m['hours']:m for m in report['metrics']}
-    for h in (6,12,24):
-        m=metrics[h]
-        if m['windows']<24 or m['mae']>0.8 or m['mae']>0.85*m['baseline_mae']:
-            return False
-    return True
+            model = next(m for m in report['models'] if m['name'] == name)
+            gain = model['coefficients'][4]/model['scales'][4]
+            if not math.isfinite(gain) or not 0 < gain <= 0.001: raise ValueError(str(gain))
+        except (KeyError, IndexError, TypeError, ValueError, ZeroDivisionError, StopIteration) as error:
+            reasons.append(f'{name}: solcellseffekt {error}; kräver 0 < effekt ≤ 0,001 °C/h per W.')
+    metrics = {m['hours']: m for m in (report or {}).get('metrics', [])}
+    for h in QUALITY_HORIZONS:
+        m = metrics.get(h, {})
+        mae = m.get('lag_mae' if name == 'lag6' else 'mae', float('inf'))
+        baseline = m.get('baseline_mae', float('nan'))
+        if m.get('windows', 0) < MIN_WINDOWS:
+            reasons.append(f'{name} {h} h: {m.get("windows", 0)} fönster; kräver ≥ {MIN_WINDOWS}.')
+        if not math.isfinite(mae) or mae > MAX_MAE or mae > HARD_MAX_MAE:
+            reasons.append(f'{name} {h} h: MAE {mae} °C; kräver ≤ {MAX_MAE} °C (absolut tak {HARD_MAX_MAE} °C).')
+        if not math.isfinite(baseline) or mae > baseline:
+            reasons.append(f'{name} {h} h: MAE {mae} °C > persistens {baseline} °C.')
+    return reasons
+
+
+def select_model(report):
+    checks = {m['name']: quality(report, m['name']) for m in report['models'] if m['name'] in ('linear', 'lag6')}
+    report['quality_version'] = 2
+    report['quality_reasons'] = checks
+    approved = [name for name, reasons in checks.items() if not reasons]
+    report['selected_model'] = min(approved, key=lambda name: sum(
+        m['lag_mae' if name == 'lag6' else 'mae'] for m in report['metrics'] if m['hours'] in QUALITY_HORIZONS)) if approved else None
+    return bool(approved)
 
 
 class AutoModel:
@@ -188,7 +238,7 @@ class AutoModel:
                 current_mapping = mapping_for(config, auto_cloud=True)
             if saved and saved.get('report') and saved['report'].get('mapping', {}).get('pv_baseline'):
                 current_mapping = mapping_for(config, pv_baseline=True)
-            same_model = bool(saved and saved.get('report') and saved['report'].get('mapping') == current_mapping)
+            same_model = bool(saved and (saved.get('status') or {}).get('state') == 'ready' and (saved.get('report') or {}).get('quality_version') == 2 and saved.get('report') and saved['report'].get('mapping') == current_mapping)
             interval = TRAIN_INTERVAL if same_model else CHECK_INTERVAL
             if self.last_check and clock-self.last_check < interval:
                 return
@@ -217,15 +267,14 @@ class AutoModel:
             try:
                 try:
                     report = evaluate_points(points, mapping, incomplete_hours=info['incomplete_hours'], source='local_log')
-                except ValueError:
+                except ValueError as error:
+                    status['quality_reasons'] = {'temperature': {'validation': [str(error)]}}
                     if not config.get('pv_power'):
                         raise
                     report = None
-                if not quality(report):
-                    if config.get('pv_power'):
-                        report = None
-                    else:
-                        raise ValueError('Modellkvaliteten räcker inte: styrsignalens skalade effekt måste vara mellan −0,5 och −0,001 °C/h per °C; 6, 12 och 24 h kräver minst 24 fönster, MAE ≤0,8 °C och minst 15 % lägre MAE än temperaturpersistens.')
+                status['evaluations'] = {'temperature': report}
+                if report is None or not select_model(report):
+                    report = None
                 automatic = mapping_for(config, auto_cloud=True)
                 if automatic and automatic.get('cloud_auto'):
                     cloud_points, cloud_info = local_points(self.data, automatic)
@@ -233,7 +282,8 @@ class AutoModel:
                         try:
                             cloud_report = evaluate_points(cloud_points, automatic,
                                 incomplete_hours=cloud_info['incomplete_hours'], source='local_log')
-                            if quality(cloud_report):
+                            status['evaluations']['cloud'] = cloud_report
+                            if select_model(cloud_report):
                                 cloud_report['fallback'] = report
                                 report = cloud_report
                                 status['complete_hours'] = len(cloud_points)
@@ -248,21 +298,26 @@ class AutoModel:
                         try:
                             pv_report = evaluate_points(pv_points, pv_mapping,
                                 incomplete_hours=pv_info['incomplete_hours'], source='local_log')
-                            if quality(pv_report):
+                            status['evaluations']['pv'] = pv_report
+                            if select_model(pv_report):
                                 if report:
                                     pv_report['fallback'] = report
                                 report = pv_report
                                 status['complete_hours'] = len(pv_points)
                                 status['mapping'] = pv_mapping
                             else:
-                                pv_reason = ' Solcellsmodellen klarade ännu inte kvalitetskontrollen; temperaturmodellen används.'
-                        except ValueError:
-                            pv_reason = ' Solcellsmodellen kunde inte valideras; temperaturmodellen används.'
+                                pv_reason = ' Solcellsmodellen klarade ännu inte kvalitetskontrollen.'
+                        except ValueError as error:
+                            status.setdefault('quality_reasons', {})['pv'] = {'validation': [str(error)]}
+                            pv_reason = ' Solcellsmodellen kunde inte valideras.'
                     else:
-                        pv_reason = f' Solcellsmodellen samlar giltig produktionshistorik: {len(pv_points)} av minst {MIN_COMPLETE_HOURS} timmar; temperaturmodellen används.'
+                        pv_reason = f' Solcellsmodellen samlar giltig produktionshistorik: {len(pv_points)} av minst {MIN_COMPLETE_HOURS} timmar.'
+                if pv_reason and report is not None:
+                    pv_reason += ' Temperaturmodellen används.'
+                status.setdefault('quality_reasons', {}).update({key: value.get('quality_reasons', {}) for key, value in status['evaluations'].items() if value})
                 if report is None:
-                    raise ValueError('Varken temperaturmodellen eller solcellsmodellen klarade kvalitetskontrollen. ' + pv_reason.strip())
-                status.update({'state': 'ready', 'message': ('Molnmodell tränad från rumstemperatur och väderentitetens aktuella molnighet; utetemperaturmodell finns som reserv.'
+                    raise ValueError(('Varken temperaturmodellen eller solcellsmodellen klarade kvalitetskontrollen. ' if config.get('pv_power') else 'Temperaturmodellen klarade inte kvalitetskontrollen. ') + pv_reason.strip())
+                status.update({'state': 'ready', 'message': (('Molnmodell tränad från rumstemperatur och väderentitetens aktuella molnighet; utetemperaturmodell finns som reserv.' if report.get('fallback') else 'Molnmodell tränad; ingen validerad temperaturmodell som reserv.')
                                                           if report.get('mapping', {}).get('cloud_auto') else
                                                           ('Solcellsmodell tränad från uppmätt produktion; utetemperaturmodell finns som reserv.'
                                                            if report.get('fallback') else 'Solcellsmodell tränad från uppmätt produktion; ingen validerad temperaturmodell som reserv.')
@@ -272,7 +327,8 @@ class AutoModel:
                 model_store.save_auto(self.data, report, status)
             except ValueError as error:
                 status.update({'state': 'needs_data', 'message': str(error)})
-                model_store.save_auto_status(self.data, status)
+                reports = status.get('evaluations', {})
+                model_store.save_auto(self.data, reports.get('temperature'), status)
         finally:
             self.lock.release()
 
@@ -309,11 +365,14 @@ class AutoModel:
                     (confirmed or recent) and applied is not None and abs(applied-current)<1e-6):
                     output={'state':'confirmed','min':low,'max':high,'step':step}
             except (KeyError,ValueError,TypeError,AttributeError): pass
-        valid_model = bool(report and quality(report))
-        plan = live_plan(report if status.get('state') == 'ready' and valid_model else None, inside, applied, forecast, config, output)
+        valid_model = bool(report and not quality(report))
+        history = local_points(self.data, mapping)[0] if mapping and report and status.get('state') == 'ready' and report.get('selected_model') == 'lag6' else None
+        plan = live_plan(report if status.get('state') == 'ready' and valid_model else None, inside, applied, forecast, config, output, history)
         fallback_used = False
-        if not plan and report and status.get('state') == 'ready' and report.get('fallback') and quality(report['fallback']):
-            plan = live_plan(report['fallback'], inside, applied, forecast, config, output)
+        if not plan and report and status.get('state') == 'ready' and report.get('fallback') and not quality(report['fallback']):
+            fallback_mapping = report['fallback']['mapping']
+            history = local_points(self.data, fallback_mapping)[0]
+            plan = live_plan(report['fallback'], inside, applied, forecast, config, output, history)
             fallback_used = bool(plan)
         message = status.get('message', '')
         if report and status.get('state') == 'ready' and not valid_model and not fallback_used:

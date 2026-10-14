@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-from app.auto_model import AutoModel, local_points, live_plan, quality, signal_effect
+from app.auto_model import AutoModel, local_points, live_plan, quality, signal_effect, select_model
 from app.core import validate
 from app import model_store
 
@@ -57,14 +57,17 @@ class AutoModelTests(unittest.TestCase):
             from app.model import evaluate_points
             def reversed_report(*args,**kwargs):
                 report=evaluate_points(*args,**kwargs)
-                model=next(m for m in report['models'] if m['name']=='linear')
-                model['coefficients'][3]=abs(model['coefficients'][3])
+                for model in report['models']:
+                    model['coefficients'] = [0] * len(model['coefficients'])
+                    model['coefficients'][3] = 0.04
                 return report
             with patch('app.auto_model.evaluate_points',side_effect=reversed_report):
                 AutoModel(data).maybe_train(config,start+timedelta(days=30))
             saved=model_store.load_auto(data)
             self.assertEqual(saved['status']['state'],'needs_data')
-            self.assertIsNone(saved['report'])
+            self.assertIsNotNone(saved['report'])
+            self.assertTrue(saved['status']['quality_reasons']['temperature']['linear'])
+            self.assertTrue(saved['status']['quality_reasons']['temperature']['lag6'])
 
     def test_weather_cloud_is_learned_without_extra_sensor(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -89,7 +92,7 @@ class AutoModelTests(unittest.TestCase):
             saved=model_store.load_auto(data)
             self.assertEqual(saved['status']['state'],'ready')
             self.assertTrue(saved['report']['mapping']['cloud_auto'])
-            self.assertIsNotNone(saved['report']['fallback'])
+            self.assertIsNone(saved['report']['fallback'])
             forecast=[{'datetime':(datetime.now(timezone.utc)+timedelta(hours=h+1)).isoformat(),
                        'temperature':5} for h in range(24)]
             readings=[{'entity':'sensor.room','value':21.0,'quality':'OK'},
@@ -98,8 +101,8 @@ class AutoModelTests(unittest.TestCase):
                      'last_updated':datetime.now(timezone.utc).isoformat(),
                      'attributes':{'unit_of_measurement':'°C','min':-15,'max':30,'step':0.5}}]
             result=AutoModel(data).result(config,readings,forecast,states)
-            self.assertEqual(len(result['plan']),24)
-            self.assertIn('utetemperaturmodellen används',result['message'])
+            self.assertEqual(result['plan'], [])
+            self.assertNotIn('utetemperaturmodellen används',result['message'])
 
     def test_waits_for_enough_complete_hours(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -161,7 +164,7 @@ class AutoModelTests(unittest.TestCase):
             saved = model_store.load_auto(data)
             self.assertEqual(saved['status']['state'], 'ready')
             self.assertEqual(saved['report']['mapping']['pv_power'], 'sensor.pv')
-            self.assertTrue(quality(saved['report']))
+            self.assertFalse(quality(saved['report']))
 
     def test_pv_forecast_needs_matching_history_and_suggests_less_heat(self):
         config = validate({'pv_power': 'sensor.pv', 'pv_forecast': 'a' * 32})
@@ -182,30 +185,30 @@ class AutoModelTests(unittest.TestCase):
 
     def test_quality_gate_rejects_poor_model(self):
         report={'metrics':[{'hours':h,'windows':30,'mae':1.0,'baseline_mae':0.5} for h in (6,12,24)]}
-        self.assertFalse(quality(report))
+        self.assertTrue(quality(report))
 
     def test_scaled_signal_direction_gate(self):
         metrics=[{'hours':h,'windows':30,'mae':0.2,'baseline_mae':1.0} for h in (6,12,24)]
         model={'name':'linear','coefficients':[0,0,0,-0.04],
                'means':[0]*4,'scales':[1,1,1,2]}
         report={'models':[model],'metrics':metrics}
-        self.assertAlmostEqual(signal_effect(report),-0.02)
-        self.assertTrue(quality(report))
+        self.assertAlmostEqual(signal_effect(report),-0.18)
+        self.assertFalse(quality(report))
         model['coefficients'][3]=0.04
-        self.assertFalse(quality(report))
+        self.assertTrue(quality(report))
         model['coefficients'][3]=-2.0
-        self.assertFalse(quality(report))
+        self.assertTrue(quality(report))
 
     def test_pv_model_requires_plausible_positive_gain(self):
         metrics = [{'hours': h, 'windows': 30, 'mae': 0.2, 'baseline_mae': 1.0} for h in (6, 12, 24)]
         model = {'name': 'linear', 'coefficients': [0, 0, 0, -0.04, 0.04],
                  'means': [0] * 5, 'scales': [1, 1, 1, 2, 1000]}
         report = {'models': [model], 'metrics': metrics, 'mapping': {'pv_power': 'sensor.pv'}}
-        self.assertTrue(quality(report))
+        self.assertFalse(quality(report))
         model['coefficients'][4] = -0.04
-        self.assertFalse(quality(report))
+        self.assertTrue(quality(report))
         model['coefficients'][4] = 10
-        self.assertFalse(quality(report))
+        self.assertTrue(quality(report))
 
     def test_solar_forecast_requires_historical_feature_and_full_day(self):
         config=validate({'solar':'sensor.sun'})
@@ -239,6 +242,70 @@ class AutoModelTests(unittest.TestCase):
         self.assertGreater(solar[1]['signal'],regular[1]['signal'])
         self.assertTrue(all(-15<=p['signal']<=30 and p['signal']*2==round(p['signal']*2) for p in solar))
         self.assertTrue(all(abs(b['signal']-a['signal'])<=1 for a,b in zip(solar,solar[1:])))
+
+    def candidate_report(self):
+        return {'models': [
+            {'name': name, 'coefficients': [0, 0, 0, -0.02] + ([0]*4 if name == 'lag6' else []),
+             'means': [0]*width, 'scales': [1]*width}
+            for name, width in (('linear', 4), ('lag6', 8))],
+            'metrics': [{'hours': h, 'windows': 30, 'mae': 0.25, 'lag_mae': 0.24,
+                         'baseline_mae': 0.26} for h in (6, 12, 24)]}
+
+    def test_absolute_gate_and_best_approved_candidate(self):
+        report = self.candidate_report()
+        self.assertFalse(quality(report, 'linear'))
+        self.assertGreater(0.25, 0.85*0.26)
+        self.assertTrue(select_model(report))
+        self.assertEqual(report['selected_model'], 'lag6')
+        report['models'][1]['coefficients'][3] = 0.02
+        self.assertTrue(quality(report, 'lag6'))
+        self.assertTrue(select_model(report))
+        self.assertEqual(report['selected_model'], 'linear')
+
+    def test_delayed_signal_response_and_live_lag_history(self):
+        report = self.candidate_report()
+        lag = report['models'][1]
+        # Positive instantaneous coefficient, negative delayed mean signal gain.
+        lag['coefficients'][3] = -0.04
+        lag['coefficients'][6] = -0.05
+        self.assertLess(signal_effect(report, 'lag6'), 0)
+        self.assertFalse(quality(report, 'lag6'))
+        report['selected_model'] = 'lag6'
+        start = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        history = {start-timedelta(hours=i): (21.5, 5, 0) for i in range(1, 7)}
+        forecast = [{'datetime': (datetime.now(timezone.utc)+timedelta(hours=i+1)).isoformat(),
+                     'temperature': 5} for i in range(24)]
+        output = {'state': 'confirmed', 'min': -15, 'max': 30, 'step': 0.5}
+        self.assertEqual(live_plan(report, 21.5, 0, forecast, validate({}), output), [])
+        self.assertEqual(len(live_plan(report, 21.5, 0, forecast, validate({}), output, history)), 24)
+        lag['coefficients'][3] = 0.02
+        lag['coefficients'][6] = 0
+        self.assertTrue(quality(report, 'lag6'))
+
+    def test_rejected_temperature_and_pv_reports_are_returned(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data = Path(directory)
+            config, start = self.make_log(data)
+            config.update(pv_power='sensor.pv', pv_forecast='a'*32)
+            points = {start+timedelta(hours=i): (21, 5, 0) for i in range(250)}
+            clock = max(points)
+            def rejected(points, mapping, **kwargs):
+                report = self.candidate_report()
+                report['mapping'] = mapping
+                for model in report['models']:
+                    model['coefficients'][3] = 0.02
+                return report
+            with patch('app.auto_model.local_points', return_value=(points, {'incomplete_hours': 0})), patch(
+                    'app.auto_model.evaluate_points', side_effect=rejected):
+                trainer = AutoModel(data)
+                trainer.maybe_train(config, clock)
+            result = trainer.result(config, [], [])
+            self.assertEqual(result['state'], 'needs_data')
+            self.assertIsNotNone(result['report'])
+            for kind in ('temperature', 'pv'):
+                for name in ('linear', 'lag6'):
+                    self.assertTrue(result['quality_reasons'][kind][name])
+            self.assertNotIn('temperaturmodellen används', result['message'].lower())
 
     def test_live_plan_requires_full_forecast(self):
         self.assertEqual(live_plan({}, 21, 5, [], validate({})), [])

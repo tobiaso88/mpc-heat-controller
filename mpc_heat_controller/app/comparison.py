@@ -6,6 +6,17 @@ recursive predictions. Outdoor and control inputs are historical oracle inputs.
 import math
 from datetime import timedelta
 
+def features(points, t, temperatures, lag):
+    hour=timedelta(hours=1)
+    temp=temperatures[t];out,u=points[t][1:3]
+    x=[1.0,out-temp,temp,u]
+    if len(points[t]) > 3: x.append(points[t][3])
+    if lag:
+        x += [temp-temperatures[t-hour],temperatures[t-hour]-temperatures[t-2*hour],
+              sum(points[t-i*hour][2] for i in range(1,7))/6-u,
+              points[t-hour][2]-u]
+    return x
+
 def compare(points, solve):
     hour=timedelta(hours=1)
     times=sorted(points)
@@ -15,20 +26,11 @@ def compare(points, solve):
     if len(train)<168: raise ValueError('För få sammanhängande träningstimmar med sex timmars förhistorik.')
     if not starts: raise ValueError('Inga gemensamma 24-timmars testfönster med sex timmars förhistorik. Välj en period med färre luckor.')
 
-    def features(t, temperatures, lag):
-        temp=temperatures[t];out,u=points[t][1:3]
-        x=[1.0,out-temp,temp,u]
-        if len(points[t]) > 3: x.append(points[t][3])
-        if lag:
-            x += [temp-temperatures[t-hour],temperatures[t-hour]-temperatures[t-2*hour],
-                  sum(points[t-i*hour][2] for i in range(1,7))/6-u,
-                  points[t-hour][2]-u]
-        return x
 
     actual={t:v[0] for t,v in points.items()}
     models=[]
     for lag in (False,True):
-        xs=[features(t,actual,lag) for t in train]
+        xs=[features(points,t,actual,lag) for t in train]
         ys=[actual[t+hour]-actual[t] for t in train]
         count=len(xs);width=len(xs[0])
         means=[0]+[sum(x[i] for x in xs)/count for i in range(1,width)]
@@ -51,7 +53,7 @@ def compare(points, solve):
             path=[]
             for h in range(24):
                 current=t+h*hour
-                x=features(current,temperatures,index==1)
+                x=features(points,current,temperatures,index==1)
                 prediction=temperatures[current]+sum(c*(v-m)/s for c,v,m,s in zip(model['coefficients'],x,model['means'],model['scales']))
                 if not math.isfinite(prediction) or abs(prediction)>1000:
                     raise ValueError('En kandidat är instabil i valideringen. Ingen modell sparades eller aktiverades.')

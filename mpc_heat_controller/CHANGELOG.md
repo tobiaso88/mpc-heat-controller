@@ -1,3 +1,10 @@
+# 0.15.4
+
+- Automatisk modell väljs mellan linear och lag6 efter kvalitetskontroll: MAE högst 0,3 °C och inte sämre än persistens vid 6/12/24 h, minst 24 fönster och fortsatt absolut tak 0,8 °C.
+- Kontrollerar styrsignalens samlade respons vid 6 och 12 h; positiv respons spärras även för lag6. Lag6 använder sex timmars historik och rekursiva features i skuggplaneringen.
+- Sparar rapporter och konkreta underkännandeorsaker även när temperatur- och solcellsmodellen faller. Visar orsaker i gränssnittet och korrigerar meddelandet om temperaturreserv.
+- Befintlig mätlogg och matchning av givarval används utan ändringar.
+
 # 0.15.3
 
 - Visar senast uppmätt solcellsproduktion och de senaste 48 timmarnas produktion i väderöversikten.
