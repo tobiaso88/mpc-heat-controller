@@ -127,6 +127,50 @@ class PVForecastTests(unittest.TestCase):
         raw[entry]['wh_hours'][invalid_time] = 'unavailable'
         self.assertNotIn(datetime.fromisoformat(invalid_time), hourly(raw, entry))
 
+    def test_provider_boundary_periods_do_not_disable_night_recovery(self):
+        fixture = json.loads((Path(__file__).parent/'fixtures/forecast_solar_boundary_periods.json').read_text())
+        entry = 'a'*32
+        raw = {entry: {'wh_hours': fixture['wh_hours']}}
+        diagnostics = {}
+        power = hourly(raw, entry, diagnostics)
+        self.assertEqual(diagnostics['invalid_points'], 0)
+        self.assertEqual(diagnostics['non_hourly_points'], 4)
+        self.assertFalse(diagnostics['night_fill_blocked_by_invalid_values'])
+        self.assertGreater(diagnostics['added_zero_hours'], 0)
+        for h in range(19, 29):
+            stamp = datetime(2024, 4, 26, tzinfo=timezone.utc)+timedelta(hours=h)
+            self.assertEqual(power[stamp], 0)
+        # Full-hour production remains unchanged; partial periods are not used
+        # as hourly inputs or rounded onto a different timestamp.
+        stamp = datetime(2024, 4, 26, 5, tzinfo=timezone.utc)
+        self.assertEqual(power[stamp], 89)
+        bad = dict(fixture['wh_hours'])
+        bad['2024-04-26T23:00:00+02:00'] = 'unavailable'
+        blocked = {}
+        self.assertNotIn(datetime(2024, 4, 26, 21, tzinfo=timezone.utc), hourly({entry: {'wh_hours': bad}}, entry, blocked))
+        self.assertTrue(blocked['night_fill_blocked_by_invalid_values'])
+
+    def test_collector_exposes_complete_night_and_normalization_with_raw_provider_data(self):
+        fixture = json.loads((Path(__file__).parent/'fixtures/forecast_solar_boundary_periods.json').read_text())
+        entry = 'a'*32
+        clock = datetime(2024, 4, 26, 12, 10, tzinfo=timezone.utc)
+        config = validate({'weather': 'weather.test', 'pv_power': 'sensor.pv', 'pv_forecast': entry})
+        states = [{'entity_id': 'weather.test', 'attributes': {'temperature_unit': '°C'}}]
+        weather = [{'datetime': (clock.replace(minute=0)+timedelta(hours=h)).isoformat(),
+                    'temperature': 12} for h in range(24)]
+        response = {'service_response': {'weather.test': {'forecast': weather}}}
+        prefs = {'energy_sources': [{'type': 'solar', 'config_entry_solar_forecast': [entry]}]}
+        with tempfile.TemporaryDirectory() as directory, patch('app.telemetry.now', return_value=clock), patch(
+                'app.telemetry.request', side_effect=[states, response]), patch(
+                'app.telemetry.energy_data', return_value=(prefs, {entry: {'wh_hours': fixture['wh_hours']}})):
+            collector = Collector(lambda: config, Path(directory))
+            collector.cycle()
+            snapshot = collector.get()
+        self.assertEqual(len(snapshot['forecast']['points']), 24)
+        self.assertTrue(all('pv_power' in p for p in snapshot['forecast']['points']))
+        self.assertGreater(snapshot['pv_forecast']['normalization']['added_zero_hours'], 0)
+        self.assertEqual(snapshot['pv_forecast']['normalization']['non_hourly_points'], 4)
+
     def test_websocket_reads_only_energy_forecast(self):
         class Socket:
             def __init__(self):

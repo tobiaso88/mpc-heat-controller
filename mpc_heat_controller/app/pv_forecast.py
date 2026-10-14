@@ -68,33 +68,54 @@ def sources(entries, prefs, forecasts):
     return result
 
 
-def hourly(forecasts, entry):
+def hourly(forecasts, entry, diagnostics=None):
     """Map hourly Wh to mean W, restoring only bounded overnight zero gaps."""
     raw = forecasts.get(entry, {}).get('wh_hours', {})
     result = {}
     original_hours = []
     invalid = False
+    invalid_points = []
+    non_hourly_points = []
+    added_zeros = []
+    def finish():
+        if diagnostics is not None:
+            diagnostics.update(source_points=len(raw), hourly_points=len(original_hours),
+                               non_hourly_points=len(non_hourly_points),
+                               non_hourly_examples=non_hourly_points[:4],
+                               invalid_points=len(invalid_points), invalid_examples=invalid_points[:4],
+                               added_zero_hours=len(added_zeros),
+                               night_fill_blocked_by_invalid_values=invalid)
+        return result
     for stamp, value in raw.items():
         try:
             moment = datetime.fromisoformat(stamp.replace('Z', '+00:00'))
             power = float(value)
-            if moment.tzinfo is None or moment.minute or moment.second or not math.isfinite(power) or power < 0:
+            if moment.tzinfo is None or not math.isfinite(power) or power < 0 or isinstance(value, bool):
                 invalid = True
+                invalid_points.append(str(stamp))
+                continue
+            # Sunrise/sunset boundary periods (and subhourly subscription data)
+            # are valid source data, but are not full-hour model inputs.
+            # Skipping them must not disable the independent night-zero rule.
+            if moment.minute or moment.second or moment.microsecond:
+                non_hourly_points.append(str(stamp))
                 continue
             result[moment.astimezone(timezone.utc)] = power
             original_hours.append(moment)
         except (ValueError, TypeError, AttributeError):
             invalid = True
+            invalid_points.append(str(stamp))
             continue
     # Forecast.Solar's Energy integration omits a zero point at local midnight.
     for left, right in zip(sorted(original_hours), sorted(original_hours)[1:]):
         middle = left + timedelta(hours=1)
         if right - left == timedelta(hours=2) and middle.hour == 0:
             result[middle.astimezone(timezone.utc)] = 0.0
+            added_zeros.append(middle.astimezone(timezone.utc))
     # Some sources contain only daylight periods. Restore only bounded nights
     # between consecutive provider-local dates with contiguous daylight blocks.
     # Never extend the source's horizon or fill an interior daytime hole.
-    if invalid: return result
+    if invalid: return finish()
     days = {}
     for moment in original_hours:
         days.setdefault(moment.date(), []).append(moment)
@@ -111,9 +132,11 @@ def hourly(forecasts, entry):
         if not timedelta(hours=6) <= end-start <= timedelta(hours=18): continue
         current = start+timedelta(hours=1)
         while current < end:
-            result.setdefault(current, 0.0)
+            if current not in result:
+                result[current] = 0.0
+                added_zeros.append(current)
             current += timedelta(hours=1)
-    return result
+    return finish()
 
 
 def combine(weather, hourly_power):

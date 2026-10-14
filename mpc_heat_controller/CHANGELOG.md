@@ -1,3 +1,9 @@
+# 0.15.8
+
+- Rättar att giltiga soluppgångs-/solnedgångspunkter mellan hela klockslag kunde stoppa all nattkomplettering i Forecast.Solar. De filtreras från timmodellen utan att behandlas som ogiltiga källvärden.
+- Lägger till normaliseringsdiagnostik i `pv_forecast.normalization`, inklusive antal överhoppade deltimmespunkter, ogiltiga punkter och kompletterade nolltimmar.
+- Regressionstestar rått Forecast.Solar-format med solgränspunkter genom både normalisering och hela telemetriinsamlingen. Kvalitetskrav och PI är oförändrade.
+
 # 0.15.7
 
 - Kompletterar Forecast.Solars utelämnade nattimmar med nollproduktion mellan sammanhängande prognoser för två efterföljande dygn. Fyller inte luckor inne i dagsprognosen eller utanför källans tidsomfång.

@@ -213,12 +213,13 @@ class Collector:
                     selected = available[0]
                     if not selected['linked']:
                         raise ValueError('Vald Forecast.Solar-källa behöver kopplas till solproduktionen i Home Assistants Energipanel.')
-                    power = pv_hourly(forecasts, pv_entry)
+                    normalization = {}
+                    power = pv_hourly(forecasts, pv_entry, normalization)
                     if not power: raise ValueError('Forecast.Solar gav ingen giltig timprognos.')
                     self.pv_power_hours = power
                     self.pv_time = now()
                     self.pv_status = {'message': 'Forecast.Solar hämtad från Energipanelen.', 'source': pv_entry,
-                                      'fetched_at': self.pv_time.isoformat(), 'hours': len(power),
+                                      'fetched_at': self.pv_time.isoformat(), 'hours': len(power), 'normalization': normalization,
                                       'points': [{'datetime': hour.isoformat(), 'pv_power': value}
                                                  for hour, value in sorted(power.items())
                                                  if self.pv_time.replace(minute=0, second=0, microsecond=0) <= hour <= self.pv_time + timedelta(hours=48)]}
