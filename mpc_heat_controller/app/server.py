@@ -16,6 +16,7 @@ from .core import DEFAULT, validate, simulate
 from .telemetry import Collector, readings, request as ha_request
 from .model import evaluate
 from . import model_store
+from .history_export import build as export_history
 from .trends import read as read_trends
 from .shadow_evaluation import read as read_shadow_evaluation
 from .pv_forecast import energy_data, sources as pv_sources
@@ -117,11 +118,13 @@ def inspect_csv(content):
     return {"entities": results, "message": "Filen är granskad, inte använd för träning. Inga luckor har fyllts."}
 
 class Handler(BaseHTTPRequestHandler):
-    def reply(self, code, data, kind="application/json"):
+    def reply(self, code, data, kind="application/json", filename=None):
         body = json.dumps(data, ensure_ascii=False).encode() if kind == "application/json" else data
         self.send_response(code)
-        self.send_header("Content-Type", kind + "; charset=utf-8")
+        self.send_header("Content-Type", kind if kind == "application/zip" else kind + "; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        if filename:
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'self'")
@@ -150,6 +153,8 @@ class Handler(BaseHTTPRequestHandler):
                 params=parse_qs(urlsplit(self.path).query)
                 return self.reply(200,read_shadow_evaluation(DATA.resolve(),
                     limit=int(params.get('limit',['24'])[0]), before=params.get('before',[None])[0]))
+            if path == "/api/model/export":
+                return self.reply(200, export_history(DATA, config()), "application/zip", "mpc-model-history.zip")
             if path == "/api/model/saved": return self.reply(200, model_store.load(DATA))
             if path == "/api/model/automatic": return self.reply(200, model_store.load_auto(DATA))
             if path == "/api/telemetry": return self.reply(200, COLLECTOR.get() if COLLECTOR else {})

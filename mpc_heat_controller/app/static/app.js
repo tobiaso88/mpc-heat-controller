@@ -31,3 +31,16 @@ function renderControl(c){$('control-status').textContent=(c?.active?'AKTIV PI �
 $('control-start').onclick=()=>$('control-dialog').showModal();$('control-cancel').onclick=()=>$('control-dialog').close();$('control-confirm').onclick=async()=>{$('control-confirm').disabled=true;try{renderControl(await api('control/start',{confirm:true}));$('control-dialog').close();await telemetry()}catch(e){$('control-dialog').close();notice(e.message)}finally{$('control-confirm').disabled=false}};$('control-stop').onclick=async()=>{try{await api('control/stop',{});await telemetry()}catch(e){notice('Stopp kunde inte bekräftas. Stoppa appen i HA. '+e.message)}};
 
 $('shadow-evaluate').onclick=async()=>{try{const result=await api('mpc/evaluation');const latest=result.proposals?.[0];$('shadow-evaluation-status').textContent=latest?`${result.message} Beslut ${localTime(latest.time)}, väderentitet ${latest.weather_entity}, hämtad ${localTime(latest.forecast_fetched_at)}. Väderfel ${latest.outdoor_mae??'—'} °C; solcellsfel ${latest.pv_power_mae??'—'} W; innefel ${latest.indoor_mae??'—'} °C.`:result.message;tableRows('shadow-evaluation-rows',(latest?.points||[]).map(p=>[p.hours+' h',p.forecast_outdoor.toFixed(1)+' °C',p.actual_outdoor==null?'—':p.actual_outdoor.toFixed(1)+' °C',p.forecast_pv_power==null?'—':p.forecast_pv_power.toFixed(0)+' W',p.actual_pv_power==null?'—':p.actual_pv_power.toFixed(0)+' W',p.predicted_indoor.toFixed(1)+' °C',p.actual_indoor==null?'—':p.actual_indoor.toFixed(1)+' °C',p.proposed_signal.toFixed(1)+' °C']))}catch(e){$('shadow-evaluation-status').textContent=e.message;tableRows('shadow-evaluation-rows',[])}};
+
+$('export-model-history').onclick=async()=>{
+  const button=$('export-model-history'), status=$('export-model-status');
+  button.disabled=true;status.textContent='Förbereder export…';
+  try{
+    const response=await fetch('api/model/export');
+    if(!response.ok)throw Error('Kunde inte exportera modellhistoriken. Försök igen.');
+    const url=URL.createObjectURL(await response.blob()), link=document.createElement('a');
+    link.href=url;link.download='mpc-model-history.zip';document.body.append(link);link.click();link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),60000);
+    status.textContent='Exporten har hämtats.';
+  }catch(e){status.textContent=e.message}finally{button.disabled=false}
+};
