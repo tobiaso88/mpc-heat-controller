@@ -90,6 +90,43 @@ class PVForecastTests(unittest.TestCase):
         self.assertEqual(power[datetime(2026, 6, 1, 22, tzinfo=timezone.utc)], 0)
         self.assertEqual(len(power), 3)
 
+    def test_daylight_only_forecast_gets_bounded_night_zeros(self):
+        entry = 'a'*32
+        first = datetime(2026, 10, 14, 14, tzinfo=timezone(timedelta(hours=2)))
+        second = first.replace(day=15, hour=8)
+        raw = {entry: {'wh_hours': {t.isoformat(): 200 for t in
+                                  [first+timedelta(hours=h) for h in range(5)] +
+                                  [second+timedelta(hours=h) for h in range(9)]}}}
+        power = hourly(raw, entry)
+        # Like the supplied telemetry: no explicit entries from 17:00 to 05:00 UTC.
+        missing = [datetime(2026, 10, 14, 17, tzinfo=timezone.utc)+timedelta(hours=h) for h in range(13)]
+        self.assertTrue(all(power[t] == 0 for t in missing))
+        self.assertEqual(power[first.astimezone(timezone.utc)], 200)
+        self.assertNotIn(first.astimezone(timezone.utc)-timedelta(hours=1), power)
+        self.assertNotIn((second+timedelta(hours=9)).astimezone(timezone.utc), power)
+
+        # An interior daytime hole is not interpreted as nighttime.
+        del raw[entry]['wh_hours'][(second+timedelta(hours=3)).isoformat()]
+        power = hourly(raw, entry)
+        self.assertNotIn((second+timedelta(hours=3)).astimezone(timezone.utc), power)
+        self.assertNotIn(missing[0], power)
+
+    def test_missing_days_invalid_values_and_long_gaps_are_not_zero_filled(self):
+        entry = 'a'*32
+        start = datetime(2026, 10, 14, 12, tzinfo=timezone.utc)
+        for gap in (20, 42):
+            with self.subTest(gap=gap):
+                stamps = [start+timedelta(hours=h) for h in range(3)]
+                stamps += [stamps[-1]+timedelta(hours=gap+h) for h in range(3)]
+                raw = {entry: {'wh_hours': {t.isoformat(): 100 for t in stamps}}}
+                self.assertEqual(len(hourly(raw, entry)), 6)
+        raw = {entry: {'wh_hours': {t.isoformat(): 100 for t in
+                                  [start+timedelta(hours=h) for h in range(5)] +
+                                  [start+timedelta(hours=18+h) for h in range(9)]}}}
+        invalid_time = (start+timedelta(hours=10)).isoformat()
+        raw[entry]['wh_hours'][invalid_time] = 'unavailable'
+        self.assertNotIn(datetime.fromisoformat(invalid_time), hourly(raw, entry))
+
     def test_websocket_reads_only_energy_forecast(self):
         class Socket:
             def __init__(self):

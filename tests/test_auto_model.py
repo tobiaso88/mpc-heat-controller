@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-from app.auto_model import AutoModel, local_points, live_plan, quality, signal_effect, select_model
+from app.auto_model import AutoModel, local_points, live_plan, quality, signal_effect, select_model, forecast_day
 from app.core import validate
 from app import model_store
 
@@ -363,6 +363,71 @@ class AutoModelTests(unittest.TestCase):
                 for name in ('linear', 'lag6'):
                     self.assertTrue(result['quality_reasons'][kind][name])
             self.assertNotIn('temperaturmodellen används', result['message'].lower())
+
+    def test_cached_forecast_advances_past_old_hours(self):
+        now = datetime.now(timezone.utc)
+        forecast = [{'datetime': (now+timedelta(hours=h)).isoformat(), 'temperature': 5}
+                    for h in range(-2, 26)]
+        day = forecast_day(forecast)
+        self.assertEqual(len(day), 24)
+        self.assertEqual(day[0], forecast[2])
+        blockers = []
+        self.assertEqual(forecast_day(forecast[:20], blockers), [])
+        self.assertIn('18 aktuella timmar', blockers[0])
+
+    def test_daylight_only_pv_forecast_builds_plan_and_reports_missing_nights(self):
+        from app.pv_forecast import hourly, combine
+        # Fix a daytime clock so this exercises the same sparse shape as telemetry.
+        clock = datetime(2026, 10, 14, 12, 12, tzinfo=timezone.utc)
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None): return clock
+        report = self.candidate_report()
+        report['mapping'] = {'pv_power': 'sensor.pv'}
+        for model in report['models']:
+            model['coefficients'].insert(4, 0.0001)
+            model['means'].insert(4, 0)
+            model['scales'].insert(4, 1)
+        report['selected_model'] = 'lag6'
+        start = clock.replace(minute=0)
+        history = {start-timedelta(hours=i): (21.5, 5, 0, 0) for i in range(1, 7)}
+        weather = [{'datetime': (start+timedelta(hours=h)).isoformat(), 'temperature': 5} for h in range(24)]
+        entry = 'a'*32
+        raw = {entry: {'wh_hours': {(start+timedelta(hours=h)).isoformat(): 100
+                                  for h in list(range(5))+list(range(18, 27))}}}
+        config = validate({'pv_power': 'sensor.pv', 'pv_forecast': entry})
+        output = {'state': 'confirmed', 'min': -15, 'max': 30, 'step': 0.5}
+        sparse = {datetime.fromisoformat(t): v for t,v in raw[entry]['wh_hours'].items()}
+        with patch('app.auto_model.datetime', Clock):
+            blockers = []
+            self.assertEqual(live_plan(report, 21.5, 0, combine(weather, sparse), config, output, history, blockers), [])
+            self.assertIn('pv_power för 13 av 24 timmar', blockers[0])
+            repaired = combine(weather, hourly(raw, entry))
+            self.assertEqual(len(live_plan(report, 21.5, 0, repaired, config, output, history)), 24)
+            blockers = []
+            self.assertEqual(live_plan(report, 21.5, 0, repaired, config, output, {}, blockers), [])
+            self.assertIn('Lag6 saknar komplett historiktimme', blockers[0])
+
+            # The API exposes the same concrete blocker rather than a generic wait.
+            from app.auto_model import mapping_for
+            config.update(mode='shadow', indoor=['sensor.room'], outdoor='sensor.out',
+                          applied_signal='number.signal')
+            report['mapping'] = mapping_for(config)
+            state = {'entity_id': 'number.signal', 'state': '0', 'last_updated': clock.isoformat(),
+                     'attributes': {'unit_of_measurement': '°C', 'min': -15, 'max': 30, 'step': 0.5}}
+            readings = [{'entity': 'sensor.room', 'quality': 'OK', 'value': 21.5},
+                        {'entity': 'number.signal', 'quality': 'OK', 'value': 0}]
+            with tempfile.TemporaryDirectory() as directory, patch('app.auto_model.local_points', return_value=(history, {})):
+                data = Path(directory)
+                model_store.save_auto(data, report, {'state': 'ready', 'message': 'Solcellsmodell validerad.'})
+                trainer = AutoModel(data)
+                waiting = trainer.result(config, readings, combine(weather, sparse), [state])
+                self.assertEqual(waiting['state'], 'ready')
+                self.assertIn('pv_power för 13 av 24 timmar', waiting['plan_blockers'][0])
+                self.assertIn(waiting['plan_blockers'][0], waiting['message'])
+                ready = trainer.result(config, readings, repaired, [state])
+                self.assertEqual(len(ready['plan']), 24)
+                self.assertEqual(ready['plan_blockers'], [])
 
     def test_live_plan_requires_full_forecast(self):
         self.assertEqual(live_plan({}, 21, 5, [], validate({})), [])

@@ -106,25 +106,47 @@ def _predict(model, values):
                zip(model['coefficients'], values, model['means'], model['scales']))
 
 
-def forecast_day(forecast):
-    if len(forecast) < 24: return []
-    try:
-        times = [datetime.fromisoformat(row['datetime'].replace('Z', '+00:00')) for row in forecast[:24]]
-        if any(t.tzinfo is None for t in times): return []
-        now = datetime.now(timezone.utc)
-        if not now-timedelta(minutes=30) <= times[0] <= now+timedelta(hours=2): return []
-        if any(not timedelta(minutes=30) <= b-a <= timedelta(minutes=90) for a,b in zip(times,times[1:])): return []
-        if times[-1] < now+timedelta(hours=22): return []
-        if any(not math.isfinite(float(row['temperature'])) for row in forecast[:24]): return []
-        return forecast[:24]
-    except (KeyError, TypeError, ValueError, AttributeError): return []
-
-
-def live_plan(report, indoor, applied, forecast, config, output=None, history=None):
-    """Display-only hourly plan; each signal is on the output's 0.5 °C grid."""
-    day = forecast_day(forecast)
-    if not report or indoor is None or applied is None or not day or not output or output.get('state') != 'confirmed':
+def forecast_day(forecast, blockers=None):
+    def reject(reason):
+        if blockers is not None: blockers.append(reason)
         return []
+    try:
+        now = datetime.now(timezone.utc)
+        first = 0
+        # Cached forecasts retain earlier hours. Advance to the usable window.
+        while first < len(forecast):
+            moment = datetime.fromisoformat(forecast[first]['datetime'].replace('Z', '+00:00'))
+            if moment.tzinfo is None: return reject('Väderprognosen saknar tidszon.')
+            if moment >= now-timedelta(minutes=30): break
+            first += 1
+        day = forecast[first:first+24]
+        if len(day) < 24:
+            return reject(f'Väderprognosen har {len(day)} aktuella timmar; kräver 24.')
+        times = [datetime.fromisoformat(row['datetime'].replace('Z', '+00:00')) for row in day]
+        if any(t.tzinfo is None for t in times): return reject('Väderprognosen saknar tidszon.')
+        if times[0] > now+timedelta(hours=2): return reject('Väderprognosen börjar mer än två timmar framåt.')
+        if any(not timedelta(minutes=30) <= b-a <= timedelta(minutes=90) for a,b in zip(times,times[1:])):
+            return reject('Väderprognosens första dygn har luckor eller fel timordning.')
+        if times[-1] < now+timedelta(hours=22): return reject('Väderprognosen täcker mindre än 22 timmar framåt.')
+        if any(not math.isfinite(float(row['temperature'])) for row in day):
+            return reject('Väderprognosen innehåller ogiltig utetemperatur.')
+        return day
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return reject('Väderprognosen innehåller ogiltiga timvärden eller tidsstämplar.')
+
+
+def live_plan(report, indoor, applied, forecast, config, output=None, history=None, blockers=None):
+    """Display-only hourly plan; each signal is on the output's 0.5 °C grid."""
+    def reject(reason):
+        if blockers is not None: blockers.append(reason)
+        return []
+    day = forecast_day(forecast, blockers)
+    if not report: return reject('Ingen godkänd modell är tillgänglig.')
+    if indoor is None: return reject('En eller flera valda rumsgivare saknar giltigt värde.')
+    if applied is None: return reject('Ohmigos inställda signal saknar giltigt värde.')
+    if not day: return []
+    if not output or output.get('state') != 'confirmed':
+        return reject('Number-utgången saknar bekräftat värde eller giltig enhet, rapporttid, gränser och steg om 0,5 °C.')
     try:
         model = next(m for m in report['models'] if m['name'] == report.get('selected_model', 'linear'))
         lag = model['name'] == 'lag6'
@@ -135,16 +157,23 @@ def live_plan(report, indoor, applied, forecast, config, output=None, history=No
             history = history or {}
             anchor = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
             for i in range(1, 7):
-                if anchor-i*hour not in history: return []
+                if anchor-i*hour not in history:
+                    return reject(f'Lag6 saknar komplett historiktimme {(anchor-i*hour).isoformat()}.')
                 past[start-i*hour] = history[anchor-i*hour]
         solar = bool(report.get('mapping', {}).get('solar'))
         cloud = bool(report.get('mapping', {}).get('cloud'))
         field = 'solar_irradiance' if solar else 'cloud_coverage' if cloud else 'pv_power' if report.get('mapping', {}).get('pv_power') else None
-        if field and any(field not in row for row in day): return []
+        if field:
+            missing = [row['datetime'] for row in day if field not in row]
+            if missing:
+                return reject(f'Prognosen saknar {field} för {len(missing)} av 24 timmar; första luckan {missing[0]}.')
+            if any(not math.isfinite(float(row[field])) for row in day):
+                return reject(f'Prognosen innehåller ogiltiga värden för {field}.')
         lo=max(float(output['min']),float(config['signal_min']))
         hi=min(float(output['max']),float(config['signal_max']))
         first=math.ceil(lo*2-1e-9);last=math.floor(hi*2+1e-9)
-        if first>last or not lo<=applied<=hi: return []
+        if first>last or not lo<=applied<=hi:
+            return reject(f'Aktuell signal {applied} °C eller tillåtna halvgradsteg ligger utanför signalgränserna {lo}–{hi} °C.')
         candidates=[(0.0,float(indoor),float(applied),[],past)]
         for index, row in enumerate(day):
             outside=float(row['temperature']);expanded=[]
@@ -164,10 +193,11 @@ def live_plan(report, indoor, applied, forecast, config, output=None, history=No
                     expanded.append((score,predicted,signal,path+[{'datetime':row['datetime'],
                         'indoor':round(predicted,3),'outdoor':round(outside,2),'signal':signal}],
                         {t: v for t, v in points.items() if t >= current-5*hour}))
-            if not expanded: return []
+            if not expanded: return reject('Ingen stabil signalbana ryms inom signalgränser och tillåten ändringstakt.')
             candidates=sorted(expanded,key=lambda item:item[0])[:60]
         return candidates[0][3]
-    except (KeyError,TypeError,ValueError,OverflowError,StopIteration): return []
+    except (KeyError,TypeError,ValueError,OverflowError,StopIteration):
+        return reject('Planeringen saknar giltiga modellvärden, historik eller prognosfält.')
 
 
 def signal_effect(report, name='linear'):
@@ -379,7 +409,8 @@ class AutoModel:
             except (KeyError,ValueError,TypeError,AttributeError): pass
         valid_model = bool(report and not quality(report))
         history = local_points(self.data, mapping)[0] if mapping and report and status.get('state') == 'ready' and report.get('selected_model') == 'lag6' else None
-        plan = live_plan(report if status.get('state') == 'ready' and valid_model else None, inside, applied, forecast, config, output, history)
+        blockers = []
+        plan = live_plan(report if status.get('state') == 'ready' and valid_model else None, inside, applied, forecast, config, output, history, blockers)
         fallback_used = False
         if not plan and report and status.get('state') == 'ready' and report.get('fallback') and not quality(report['fallback']):
             fallback_mapping = report['fallback']['mapping']
@@ -390,8 +421,8 @@ class AutoModel:
         if report and status.get('state') == 'ready' and not valid_model and not fallback_used:
             message += ' Sparad modell har felvänd eller orimlig styrverkan och spärras.'
         elif report and status.get('state') == 'ready' and not plan:
-            message += ' Liveförslag väntar på färsk, bekräftad number-utgång, giltiga mätvärden och 24 timmars matchande väderprognos.'
+            message += ' Liveförslag väntar: ' + ' '.join(blockers)
         elif plan:
             message += (' Sol- eller molnprognos saknas; utetemperaturmodellen används.' if fallback_used else '')
             message += ' MPC-förslaget är endast skuggläge och skickas inte.'
-        return dict(status, report=report, plan=plan, message=message)
+        return dict(status, report=report, plan=plan, message=message, plan_blockers=blockers if not plan else [])

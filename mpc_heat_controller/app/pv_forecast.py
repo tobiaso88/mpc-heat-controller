@@ -69,25 +69,50 @@ def sources(entries, prefs, forecasts):
 
 
 def hourly(forecasts, entry):
-    """Map hourly Wh to mean W over the hour; reject sparse or invalid data."""
+    """Map hourly Wh to mean W, restoring only bounded overnight zero gaps."""
     raw = forecasts.get(entry, {}).get('wh_hours', {})
     result = {}
     original_hours = []
+    invalid = False
     for stamp, value in raw.items():
         try:
             moment = datetime.fromisoformat(stamp.replace('Z', '+00:00'))
             power = float(value)
             if moment.tzinfo is None or moment.minute or moment.second or not math.isfinite(power) or power < 0:
+                invalid = True
                 continue
             result[moment.astimezone(timezone.utc)] = power
             original_hours.append(moment)
         except (ValueError, TypeError, AttributeError):
+            invalid = True
             continue
     # Forecast.Solar's Energy integration omits a zero point at local midnight.
     for left, right in zip(sorted(original_hours), sorted(original_hours)[1:]):
         middle = left + timedelta(hours=1)
         if right - left == timedelta(hours=2) and middle.hour == 0:
             result[middle.astimezone(timezone.utc)] = 0.0
+    # Some sources contain only daylight periods. Restore only bounded nights
+    # between consecutive provider-local dates with contiguous daylight blocks.
+    # Never extend the source's horizon or fill an interior daytime hole.
+    if invalid: return result
+    days = {}
+    for moment in original_hours:
+        days.setdefault(moment.date(), []).append(moment)
+    dates = sorted(days)
+    for left_date, right_date in zip(dates, dates[1:]):
+        left_day, right_day = sorted(days[left_date]), sorted(days[right_date])
+        if right_date-left_date != timedelta(days=1): continue
+        if len(left_day) < 3 or len(right_day) < 3: continue
+        if any(b.astimezone(timezone.utc)-a.astimezone(timezone.utc) != timedelta(hours=1)
+               for day in (left_day, right_day) for a,b in zip(day, day[1:])): continue
+        left, right = left_day[-1], right_day[0]
+        if left.hour < 12 or right.hour > 12: continue
+        start, end = left.astimezone(timezone.utc), right.astimezone(timezone.utc)
+        if not timedelta(hours=6) <= end-start <= timedelta(hours=18): continue
+        current = start+timedelta(hours=1)
+        while current < end:
+            result.setdefault(current, 0.0)
+            current += timedelta(hours=1)
     return result
 
 

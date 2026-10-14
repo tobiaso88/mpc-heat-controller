@@ -1,3 +1,10 @@
+# 0.15.7
+
+- Kompletterar Forecast.Solars utelämnade nattimmar med nollproduktion mellan sammanhängande prognoser för två efterföljande dygn. Fyller inte luckor inne i dagsprognosen eller utanför källans tidsomfång.
+- Visar konkreta orsaker när en godkänd modell inte kan bygga skuggförslag, inklusive saknade solcellsprognostimmar och lag6-historik. Orsakerna finns även i `mpc.plan_blockers`.
+- Hoppar över för gamla inledande timmar i cachad väderprognos och använder nästa giltiga 24-timmarsfönster.
+- Modellens kvalitetskrav, mätlogg och aktiv PI-styrning är oförändrade.
+
 # 0.15.6
 
 - Återanvänder sparade nollvärden från solcellsproduktion i sammanhängande platåer på 4–18 timmar, med färska värden på båda sidor. Saknade värden, återställda värden och gammal positiv effekt fylls inte i. Befintlig mätlogg skrivs inte om och givarurvalets matchning ändras inte.
