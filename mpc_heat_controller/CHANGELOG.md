@@ -1,3 +1,9 @@
+# 0.15.5
+
+- Lägger till Exportera modellhistorik under Historik → Automatisk modell.
+- Hämtar ZIP med råhistorik, kompletta timvärden för aktuella modellvarianter samt senaste modellrapport och valideringsstatus.
+- Export fungerar även innan modellen klarat valideringen. Tidsstämplar anges i UTC och inga luckor fylls.
+
 # 0.15.4
 
 - Automatisk modell väljs mellan linear och lag6 efter kvalitetskontroll: MAE högst 0,3 °C och inte sämre än persistens vid 6/12/24 h, minst 24 fönster och fortsatt absolut tak 0,8 °C.
