@@ -1,3 +1,9 @@
+# 0.19.1
+
+- Lärande visar status för MPC-inlärning när den är påslagen: vilken modell som är godkänd för inlärning, kravet för inlärning och om MPC styr. Steget *Skuggförslag* heter då *MPC-inlärning*.
+- När inlärningen är godkänd men det strikta kravet för skuggförslag (0,35 °C) inte är uppfyllt listas de återstående kraven under en egen rubrik i stället för som fel. Felmeddelandet från kvalitetskontrollen döljs då.
+- Endast gränssnittet ändras. Styrning, krav och PI är oförändrade.
+
 # 0.19.0
 
 - Ny inställning *MPC-inlärning* under Avancerat, avstängd som förval. När den är på och aktiv styrning är igång skickas MPC:s signal för nästa timme, begränsad till *Största avvikelse från PI* (förval ±2 °C, 0,5–3 °C).

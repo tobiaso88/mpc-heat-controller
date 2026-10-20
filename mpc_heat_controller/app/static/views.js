@@ -376,23 +376,40 @@ function tableRows(id, rows) { $(id).replaceChildren(...rows.map(row => h('tr', 
 function renderLearning() {
   const m = state.telemetry?.mpc || {}, demo = isDemo(), plan = m.plan || [];
   const hours = m.complete_hours || 0, remaining = Math.max(0, MIN_HOURS - hours);
+  const learning = state.settings?.mpc_learning ? m.learning : null, learningReady = learning?.state === 'ready';
+  const modelName = name => name === 'lag6' ? 'Fördröjningsmodell' : 'Enkel modell';
+  const deviation = num(state.settings?.mpc_max_deviation ?? 2);
+  const steering = controlState() === 'active' ? `MPC styr inom ±${deviation} °C från PI` : 'Plan klar – styr när aktiv styrning startas';
   let steps;
-  if (m.state === 'ready') steps = [['done', `${hours} kompletta timmar`], ['done', (m.report?.selected_model === 'lag6' ? 'Fördröjningsmodell' : 'Enkel modell') + ' godkänd' + (m.trained_at ? ' · ' + fullTime(m.trained_at) : '')],
+  if (learningReady && m.state !== 'ready') steps = [['done', `${hours} kompletta timmar`], ['done', `${modelName(learning.model)} godkänd för inlärning (högst 0,8 °C)`], ['done', steering]];
+  else if (learningReady) steps = [['done', `${hours} kompletta timmar`], ['done', modelName(m.report?.selected_model) + ' godkänd' + (m.trained_at ? ' · ' + fullTime(m.trained_at) : '')], ['done', steering]];
+  else if (m.state === 'ready') steps = [['done', `${hours} kompletta timmar`], ['done', (m.report?.selected_model === 'lag6' ? 'Fördröjningsmodell' : 'Enkel modell') + ' godkänd' + (m.trained_at ? ' · ' + fullTime(m.trained_at) : '')],
     plan.length ? ['done', 'Förslag visas på Hem'] : ['failed', 'Väntar: ' + ((m.plan_blockers || [])[0] || 'se orsak nedan')]];
   else if (m.state === 'needs_data') steps = [['done', `${hours} kompletta timmar`], ['failed', 'Klarade inte kraven ännu – fortsätter samla'], ['', 'Visas när modellen godkänts']];
   else if (m.state === 'collecting') steps = [['current', `${hours} av ${MIN_HOURS} timmar · ca ${Math.ceil(remaining / 24)} dygn kvar`], ['', 'Medelfel högst 0,35 °C vid 6, 12 och 24 h'], ['', 'Visas när modellen godkänts']];
   else if (m.state === 'error') steps = [['failed', 'Mätloggen kunde inte läsas'], ['', ''], ['', '']];
   else steps = [['', demo ? 'Pausad i demoläge – startar i skuggläge' : 'Väntar på första kontrollen'], ['', 'Medelfel högst 0,35 °C vid 6, 12 och 24 h'], ['', 'Visas när modellen godkänts']];
-  $('journey').replaceChildren(...['Samlar data', 'Kvalitetskontroll', 'Skuggförslag'].map((title, i) => {
+  $('journey').replaceChildren(...['Samlar data', 'Kvalitetskontroll', learning ? 'MPC-inlärning' : 'Skuggförslag'].map((title, i) => {
     const li = h('li', {data: {s: steps[i][0]}, 'aria-current': steps[i][0] === 'current' ? 'step' : null}, h('b', {text: title}), h('small', {text: steps[i][1]}));
     if (i === 0 && m.state === 'collecting') { const bar = h('span', {class: 'progress'}, h('i')); bar.firstChild.style.width = Math.min(100, hours / MIN_HOURS * 100) + '%'; li.append(bar); }
     return li;
   }));
   const extra = [m.report?.recovered_pv_zero_samples ? `Återanvända historiska nollvärden för solceller: ${m.report.recovered_pv_zero_samples}.` : ''];
   $('model-message').textContent = [m.message || 'Väntar på automatisk modellstatus.', ...extra].filter(Boolean).join(' ');
+  // The strict-gate failure message reads as an error although learning is running; the callout explains instead.
+  $('model-message').hidden = learningReady && m.state !== 'ready';
   const labels = {temperature: 'Temperaturmodell', pv: 'Solcellsmodell', cloud: 'Molnmodell'};
   const reasons = m.state === 'ready' ? [] : Object.entries(m.quality_reasons || {}).flatMap(([kind, models]) => Object.values(models || {}).flat().map(r => (labels[kind] || kind) + ': ' + r));
-  $('model-reasons').replaceChildren(...[...reasons, ...(m.plan_blockers || [])].map(text => h('li', {text})));
+  const box = $('model-learning');
+  box.hidden = !learning;
+  box.classList.toggle('warn', !!learning && !learningReady);
+  if (learning) box.textContent = learningReady
+    ? `MPC-inlärning är godkänd med ${modelName(learning.model).toLowerCase()} (${{pv: 'solcellsmodell', cloud: 'molnmodell'}[learning.source] || 'temperaturmodell'}). Kravet för inlärning är rätt signalriktning, medelfel högst 0,8 °C och bättre än oförändrad temperatur nästa timme. ${steering}; PI tar över när det är för kallt inne eller planen saknas.`
+    : 'MPC-inlärning väntar: ' + (learning.reasons || []).slice(0, 3).join(' ') + ' PI styr under tiden.';
+  const strict = learningReady && reasons.length;
+  $('model-reasons-title').hidden = !strict;
+  $('model-reasons-title').textContent = 'Kvar till det strikta kravet för skuggförslag (0,35 °C). Det behövs inte för inlärningen – modellen tränas om varje dygn och kan klara det med tiden:';
+  $('model-reasons').replaceChildren(...[...reasons, ...(learningReady ? [] : m.plan_blockers || [])].map(text => h('li', {text})));
   renderAccuracy($('accuracy'), m.report?.metrics || [], m.report?.selected_model, 'Visas när modellen har tränats – det kräver minst 250 kompletta timmar i skuggläge.');
 }
 

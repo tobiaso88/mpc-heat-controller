@@ -133,10 +133,12 @@
 
     <!-- LÄRANDE -->
     <section id="learning" class="view" hidden aria-labelledby="learning-title">
-      <div class="page-head"><h1 id="learning-title">Husmodellen lär sig</h1><p class="sub">Appen lär sig hur ditt hus reagerar på väder och värme. När modellen är tillräckligt bra visas styrförslag i skuggläge – de skickas aldrig till värmepumpen.</p></div>
+      <div class="page-head"><h1 id="learning-title">Husmodellen lär sig</h1><p class="sub">Appen lär sig hur ditt hus reagerar på väder och värme. Skuggförslag visas bara och skickas inte. Med MPC-inlärning påslagen styr MPC värmepumpen inom en gräns runt PI:s signal.</p></div>
       <article class="card">
         <ol id="journey" class="journey"></ol>
+        <p id="model-learning" class="callout" hidden></p>
         <p id="model-message"></p>
+        <p id="model-reasons-title" class="sub" hidden></p>
         <ul id="model-reasons" class="reasons"></ul>
       </article>
       <article class="card">
@@ -282,7 +284,7 @@
       </div>
     </section>
 
-    <footer>MPC Heat Controller · Förhandsversion 0.19.0 · Lokal drift</footer>
+    <footer>MPC Heat Controller · Förhandsversion 0.19.1 · Lokal drift</footer>
   </main>
 
   <nav class="tabbar" aria-label="Huvudmeny, mobil">
