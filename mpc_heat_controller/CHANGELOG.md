@@ -1,3 +1,12 @@
+# 0.19.0
+
+- Ny inställning *MPC-inlärning* under Avancerat, avstängd som förval. När den är på och aktiv styrning är igång skickas MPC:s signal för nästa timme, begränsad till *Största avvikelse från PI* (förval ±2 °C, 0,5–3 °C).
+- PI räknar alltid parallellt och styr ensam när innetemperaturen är under komfortområdet, när ingen godkänd plan finns eller när planen är äldre än 15 minuter. När det är varmare än komfortområdet får MPC bara ge mindre värme än PI. Watchdog, signalgränser, ändringstakt, kvittens och stopp vid fel är oförändrade.
+- Inlärningen använder ett eget godkännande: rätt signalriktning, stabil prognos med MAE ≤ 0,8 °C vid 1/6/12/24 h och bättre än persistens för nästa timme. Skuggförslagens kvalitetskrav (0,35 °C och persistens vid 6/12/24 h) är oförändrat.
+- Planeringen i inlärningsläget lägger till en dygnsprofil: modellens genomsnittliga fel per klockslag de senaste sju dygnen, högst ±0,3 °C per timme. Den fångar värme modellen saknar indata för, som matlagning, närvaro och kvällssol.
+- Historikgrafen på Hem visar vem som styrde (MPC eller PI) och färgar Ohmigos inställda värde när MPC styrde. Styrkortet visar vem som styr nu och varför.
+- Sparade inställningar för automatisk återstart från tidigare versioner får de nya standardvärdena, så återstarten fortsätter efter uppdateringen. Uppdaterad kvalitetsversion tränar om modellen vid nästa kontroll.
+
 # 0.18.0
 
 - När en eller flera styrande rumsgivare tas bort kan historiken behållas. Mätloggens givarval uppdateras så att tidigare mätningar räknas som medelvärdet av de kvarvarande rummen. Inga mätvärden ändras och de borttagna givarnas värden finns kvar i loggen. Husmodellen tränas om på den behållna historiken vid nästa kontroll i stället för att samla 250 nya timmar.

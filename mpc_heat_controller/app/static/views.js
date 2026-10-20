@@ -114,9 +114,11 @@ function renderControl() {
   $('control-message').textContent = c?.message || '';
   const facts = [];
   if (c?.last_command) facts.push(['Senast skickat', deg(c.last_command.value), clock(c.last_command.sent_at * 1000)]);
-  const pi = t?.pi, plan = t?.mpc?.plan || [];
-  if (finite(pi?.signal)) facts.push(['PI föreslår', deg(pi.signal), cs === 'active' ? 'skickas' : 'beräknat, skickas ej']);
-  if (plan.length) facts.push(['MPC föreslår', deg(plan[0].signal), 'skuggförslag']);
+  const pi = t?.pi, plan = t?.mpc?.plan || [], learning = state.settings.mpc_learning ? t?.mpc?.learning : null, decision = c?.decision;
+  if (cs === 'active' && decision) facts.push(['Styr nu', decision.source === 'mpc' ? 'MPC' : 'PI', decision.reason]);
+  if (finite(pi?.signal)) facts.push(['PI föreslår', deg(pi.signal), cs !== 'active' ? 'beräknat, skickas ej' : learning ? 'räcke och reserv' : 'skickas']);
+  if (plan.length) facts.push(['MPC föreslår', deg(plan[0].signal), learning?.state === 'ready' ? (cs === 'active' ? `inom ±${num(state.settings.mpc_max_deviation)} °C från PI` : 'inlärning, skickas när styrningen är aktiv') : 'skuggförslag']);
+  else if (learning?.state === 'blocked') facts.push(['MPC', 'Väntar', learning.reasons?.[0] || '']);
   else if (isDemo() && state.status?.plan?.length) facts.push(['MPC-förslag', deg(state.status.plan[0].signal), 'simulerat']);
   const out = okValue(state.settings.outdoor);
   if (finite(out) && facts.length < 4) facts.push(['Verklig ute', deg(out), '']);
@@ -178,6 +180,9 @@ function renderHealth() {
     open.link ? h('a', {class: 'link', href: open.link[0], text: open.link[1] + ' →'}) : null);
 }
 
+function sourceSeries(key, source) {
+  return (state.trends?.points || []).map(p => ({t: Date.parse(p.datetime), v: p.source === source ? (key ? p[key] : 1) : null}));
+}
 function trendSeries(key) { return (state.trends?.points || []).map(p => ({t: Date.parse(p.datetime), v: p[key]})); }
 
 function renderHomeTimeline() {
@@ -197,9 +202,14 @@ function renderHomeTimeline() {
       {key: 'outdoor', label: 'Ute, uppmätt', color: 'var(--c-outdoor)', maxGap: 20 * 60000, points: trendSeries('outdoor')},
       {key: 'outdoor-fc', label: demo ? 'Ute, simulerad' : 'Ute, prognos', color: 'var(--c-outdoor)', dash: true, points: demo ? plan.map(p => ({t: p.t, v: p.outdoor})) : forecast},
       {key: 'applied', label: 'Ohmigo inställt', color: 'var(--c-applied)', maxGap: 20 * 60000, points: trendSeries('applied')},
+      {key: 'applied-mpc', label: 'Inställt av MPC', color: 'var(--c-mpc)', width: 4, maxGap: 20 * 60000, points: sourceSeries('applied', 'mpc')},
       {key: 'pump', label: 'Pumpen läser', color: 'var(--c-pump)', hidden: true, maxGap: 20 * 60000, points: trendSeries('pump_outdoor')},
       {key: 'pi', label: 'PI-förslag', color: 'var(--c-pi)', dash: true, hidden: true, maxGap: 20 * 60000, points: trendSeries('proposal')},
       {key: 'mpc', label: demo ? 'Simulerad signal' : 'MPC-förslag', color: 'var(--c-mpc)', dash: true, points: plan.map(p => ({t: p.t, v: p.signal}))}]}];
+  // Which regulator produced the value sent to Ohmigo; empty when control was not active.
+  lanes.push({title: 'Styrdes av', height: 16, min: 0, max: 1, tick: () => '', format: () => 'styrde', series: [
+    {key: 'by-mpc', label: 'MPC styrde', color: 'var(--c-mpc)', bars: true, opacity: .85, points: sourceSeries(null, 'mpc')},
+    {key: 'by-pi', label: 'PI styrde', color: 'var(--c-pi)', bars: true, opacity: .85, points: sourceSeries(null, 'pi')}]});
   const pvForecast = (t?.pv_forecast?.points || []).map(p => ({t: Date.parse(p.datetime), v: p.pv_power}));
   const pvMeasured = trendSeries('pv_power');
   if (pvForecast.length || pvMeasured.some(p => finite(p.v))) {
@@ -564,9 +574,9 @@ const FIELD_LABELS = {mode: 'läge', target: 'önskad temperatur', comfort_min: 
   pump_outdoor: 'pumpens utetemperatur', weather: 'väder', solar: 'solinstrålning', cloud: 'molnighet', pv_power: 'solcellsproduktion', pv_forecast: 'solprognos',
   old_automation: 'gammal automation', watchdog_seconds: 'watchdog-timeout', watchdog_verified: 'watchdog verifierad', exclusive_writer_confirmed: 'ensam skrivare',
   auto_restart: 'automatisk återstart', pi_kp: 'Kp', pi_ki: 'Ki', pi_limit: 'max kompensation', pi_rate: 'max signaländring', signal_min: 'lägsta signal',
-  signal_max: 'högsta signal', max_step: 'största ändring'};
-const NUMBER_FIELDS = ['target', 'comfort_min', 'comfort_max', 'signal_min', 'signal_max', 'max_step', 'pi_kp', 'pi_ki', 'pi_limit', 'pi_rate', 'watchdog_seconds'];
-const CHECK_FIELDS = ['watchdog_verified', 'exclusive_writer_confirmed', 'auto_restart'];
+  signal_max: 'högsta signal', max_step: 'största ändring', mpc_learning: 'MPC-inlärning', mpc_max_deviation: 'största avvikelse från PI'};
+const NUMBER_FIELDS = ['target', 'comfort_min', 'comfort_max', 'signal_min', 'signal_max', 'max_step', 'pi_kp', 'pi_ki', 'pi_limit', 'pi_rate', 'watchdog_seconds', 'mpc_max_deviation'];
+const CHECK_FIELDS = ['watchdog_verified', 'exclusive_writer_confirmed', 'auto_restart', 'mpc_learning'];
 function fillForm() {
   for (const k of NUMBER_FIELDS) $(k).value = draft[k];
   for (const k of CHECK_FIELDS) $(k).checked = draft[k];
@@ -611,6 +621,7 @@ function validateDraft() {
   if (!errors.target && !errors.comfort_min && !errors.comfort_max && !(7 <= draft.comfort_min && draft.comfort_min <= draft.target && draft.target <= draft.comfort_max && draft.comfort_max <= 35))
     errors.target = 'Lägsta ≤ önskad ≤ högsta, inom 7–35 °C.';
   if (draft.signal_min >= draft.signal_max) errors.signal_max = 'Högsta signal måste vara större än lägsta.';
+  if (!errors.mpc_max_deviation && !(0.5 <= draft.mpc_max_deviation && draft.mpc_max_deviation <= 3)) errors.mpc_max_deviation = 'Största avvikelse från PI: 0,5–3 °C.';
   if (!Number.isInteger(draft.watchdog_seconds) || draft.watchdog_seconds < 0 || draft.watchdog_seconds > 86400) errors.watchdog_seconds = 'Hela sekunder, 0–86 400.';
   if (draft.mode === 'shadow' && (!draft.indoor.length || !draft.outdoor)) errors.mode = 'Skuggläge kräver minst ett rum och en verklig utegivare.';
   if (!!draft.pv_power !== !!draft.pv_forecast) errors.pv_power = 'Välj både produktion och prognoskälla, eller ingen av dem.';

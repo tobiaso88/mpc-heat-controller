@@ -253,9 +253,12 @@ class Collector:
                     snapshot['mpc']={'state':'error','message':'Automatisk modellträning kunde inte läsas eller sparas. PI fortsätter oförändrat.','plan':[]}
             else:
                 snapshot['mpc']={'state':'off','message':'Automatisk modellträning är pausad i demoläge.','plan':[]}
-            self.control.send(c,states,snapshot['pi'])
-            if self.control.get()['active']:
-                snapshot['pi']['message']='Aktiv PI. Temperaturkommandon skickas till vald utgång; se styrstatus.'
+            decision=self.control.send(c,states,snapshot['pi'],mpc=snapshot.get('mpc'))
+            control=self.control.get()
+            if control['active']:
+                snapshot['pi']['message']=('Aktiv styrning med MPC-inlärning; PI är räcke och reserv.' if c.get('mpc_learning') else
+                                           'Aktiv PI. Temperaturkommandon skickas till vald utgång; se styrstatus.')
+                if c['mode']=='shadow':self.store_control(stamp,control.get('source'),decision)
         except Exception:
             self.control.pause('PI pausad vid databortfall eller loggningsfel. Watchdog ska återgå till riktig utegivare.')
             self.pi.reset()
@@ -275,6 +278,13 @@ class Collector:
             db.execute('CREATE TABLE IF NOT EXISTS pi_samples (time TEXT PRIMARY KEY, result TEXT NOT NULL)')
             db.execute('INSERT OR REPLACE INTO pi_samples VALUES (?, ?)', (stamp, json.dumps(pi)))
             db.execute('DELETE FROM pi_samples WHERE time < ?', ((now()-timedelta(days=90)).isoformat(),))
+
+    def store_control(self,stamp,source,decision):
+        """Which regulator produced the value last sent, and this cycle's choice, for the history chart."""
+        with sqlite3.connect(self.data/'measurements.sqlite') as db:
+            db.execute('CREATE TABLE IF NOT EXISTS control_samples (time TEXT PRIMARY KEY, result TEXT NOT NULL)')
+            db.execute('INSERT OR REPLACE INTO control_samples VALUES (?,?)',(stamp,json.dumps({'source':source,'decision':decision})))
+            db.execute('DELETE FROM control_samples WHERE time < ?',((now()-timedelta(days=90)).isoformat(),))
 
     def store_mpc(self,stamp,result,forecast=None,config=None):
         plan=result.get('plan') or []

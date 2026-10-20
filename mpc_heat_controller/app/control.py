@@ -4,7 +4,9 @@ import threading
 import time
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+
+from .core import validate
 
 class Control:
     ACK_GRACE_SECONDS=120
@@ -22,10 +24,16 @@ class Control:
         self.data=data
         self.resume_settings=None
         self.ready_since=None
+        self.decision=None
+        self.last_source=None
         if data is not None and (data/'control.sqlite').exists():
             with sqlite3.connect(data/'control.sqlite') as db:
                 row=db.execute('SELECT settings FROM intent WHERE id=1').fetchone()
-            if row:self.resume_settings=json.loads(row[0])
+            if row:
+                self.resume_settings=json.loads(row[0])
+                # Settings saved by an earlier version lack newer keys; their defaults apply.
+                try:self.resume_settings=validate(self.resume_settings)
+                except (ValueError,TypeError):pass
         self.info={'active':False,'message':'Avstängd. Aktiv PI måste startas uttryckligen efter varje omstart.'}
         if self.resume_settings is not None:self.info={'active':False,'message':'Väntar på att givare och utgång ska bli redo för automatisk återstart.'}
 
@@ -129,7 +137,7 @@ class Control:
             if not c['indoor'] or not required.issubset(valid):raise ValueError('Aktuella inne- och utetemperaturer krävs.')
             if self.armed:raise ValueError('PI är redan aktiv.')
             self.persist(dict(c) if c.get('auto_restart') else None)
-            self.settings=dict(c);self.armed=True;self.last_sent=value;self.changed_at=time.monotonic();self.pending_ack=None
+            self.settings=dict(c);self.armed=True;self.last_sent=value;self.last_source=None;self.decision=None;self.changed_at=time.monotonic();self.pending_ack=None
             self.info={'active':True,'message':'Aktiverad. Väntar på första temperaturkommandot.'}
 
     def reconfigure_comfort(self,c):
@@ -151,17 +159,45 @@ class Control:
             raise ValueError(f'Senaste kommandot {self.last_sent:g} °C har inte bekräftats av HA; utgången visar fortfarande {current:g} °C.')
         raise ValueError(f'Utgången ändrades oväntat från {self.last_sent:g} till {current:g} °C. Kontrollera andra skrivare.')
 
-    def send(self,c,states,pi,clock=None):
+    @staticmethod
+    def choose(c,pi,mpc,now=None):
+        """Pick the signal to send. MPC learning stays within ±mpc_max_deviation of PI's proposal;
+        PI alone decides when it is cold, when no usable plan exists or when the plan is stale.
+        When it is too warm, MPC may only give less heat than PI."""
+        signal=pi.get('signal')
+        if not c.get('mpc_learning'):return signal,{'source':'pi','reason':'MPC-inlärning är avstängd.'}
+        learning=(mpc or {}).get('learning') or {}
+        if learning.get('state')!='ready':
+            return signal,{'source':'pi','reason':'MPC saknar plan: '+' '.join((learning.get('reasons') or ['ingen inlärningsmodell'])[:2])}
+        try:
+            planned=float(learning['signal']);age=(now or datetime.now(timezone.utc))-datetime.fromisoformat(learning['planned_at'])
+            if not math.isfinite(planned):raise ValueError()
+        except (KeyError,TypeError,ValueError):return signal,{'source':'pi','reason':'MPC-planen är ogiltig.'}
+        if not timedelta(0)<=age<=timedelta(minutes=15):return signal,{'source':'pi','reason':'MPC-planen är för gammal.'}
+        inside=c['target']-pi['error']
+        if inside<c['comfort_min']:
+            return signal,{'source':'pi','reason':f'Innetemperaturen {inside:.2f} °C är under komfortområdet; PI styr.'.replace('.',',',1)}
+        deviation=c['mpc_max_deviation']
+        chosen=min(signal+deviation,max(signal-deviation,planned))
+        # A higher signal means less heat. Above comfort, MPC may only reduce heat compared with PI.
+        if inside>c['comfort_max'] and chosen<signal:
+            return signal,{'source':'pi','reason':'Varmt inne och MPC ville ge mer värme än PI; PI styr.','mpc_signal':planned}
+        return chosen,{'source':'mpc','reason':'MPC styr inom ±'+f'{deviation:g}'.replace('.',',')+' °C från PI.','mpc_signal':planned,'pi_signal':signal,
+                       'limited':abs(chosen-planned)>1e-9,'model':learning.get('model')}
+
+    def send(self,c,states,pi,clock=None,mpc=None):
         with self.lock:
-            if not self.armed:return
+            if not self.armed:return None
+            decision=None
             try:
                 if c!=self.settings:raise ValueError('Inställningarna ändrades. Aktivera på nytt efter granskning.')
                 current,low,high,step=self.target(c,states)
-                proposed=pi.get('signal')
-                if proposed is None or not math.isfinite(proposed):raise ValueError('PI saknar giltigt förslag.')
+                if pi.get('signal') is None or not math.isfinite(pi['signal']):raise ValueError('PI saknar giltigt förslag.')
+                proposed,decision=self.choose(c,pi,mpc)
+                self.decision=decision
                 clock=time.monotonic() if clock is None else clock
                 self.verify_output(current,step,clock)
-                if self.last_dispatch is not None and clock-self.last_dispatch<300:return
+                if self.last_dispatch is not None and clock-self.last_dispatch<300:return decision
                 lo=max(low,c['signal_min']);hi=min(high,c['signal_max'])
                 min_tick=math.ceil(lo*2-1e-9);max_tick=math.floor(hi*2+1e-9)
                 value=max(min_tick,min(max_tick,math.floor(proposed*2+0.5)))/2
@@ -170,7 +206,7 @@ class Control:
                     # rate allowance rather than transmitting an unrounded value.
                     if abs(self.last_sent*2-round(self.last_sent*2))>1e-6:
                         self.info={'active':True,'message':'Väntar på tillåten ändring till närmaste 0,5 °C. Inget skickas ännu.'}
-                        return
+                        return decision
                     value=self.last_sent
                 # Repeat unchanged values every five minutes for the watchdog.
                 previous=self.last_sent
@@ -180,12 +216,17 @@ class Control:
                 self.last_sent=value
                 self.pending_ack={'previous':previous,'sent_at':clock} if value!=previous else None
                 self.last_command={'value':value,'sent_at':time.time()}
-                self.info={'active':True,'value':value,'sent_at':time.time(),
-                           'message':'Temperaturkommando skickat via HA. Detta är inte kvittens från värmepumpen.'}
+                self.last_source=decision['source']
+                self.info={'active':True,'value':value,'sent_at':time.time(),'source':decision['source'],'source_reason':decision['reason'],
+                           'message':('MPC' if decision['source']=='mpc' else 'PI')+'-kommando skickat via HA. Detta är inte kvittens från värmepumpen.'}
+                return decision
             except Exception as e:
                 message='PI stoppad: '+(str(e) if isinstance(e,ValueError) else 'Skrivning till Home Assistant misslyckades.')
                 if isinstance(e,ValueError):self.stop(message,fault=True)
                 else:self.pause(message)
+                return None
 
     def get(self):
-        with self.lock:return dict(self.info, auto_restart_pending=self.resume_settings is not None and not self.armed,last_command=self.last_command)
+        with self.lock:return dict(self.info, auto_restart_pending=self.resume_settings is not None and not self.armed,last_command=self.last_command,
+                                   decision=self.decision if self.armed else None,
+                                   source=self.last_source if self.armed else None)

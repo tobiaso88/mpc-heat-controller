@@ -261,6 +261,12 @@
               <label class="field"><span class="field-label">Maximal kompensation</span><span class="with-unit"><input id="pi_limit" type="number" min="0.1" max="30" step="0.1" inputmode="decimal"><span>°C</span></span></label>
               <label class="field"><span class="field-label">Maximal signaländring</span><span class="with-unit"><input id="pi_rate" type="number" min="0.1" max="20" step="0.1" inputmode="decimal"><span>°C per timme</span></span></label>
             </div>
+            <h3>MPC-inlärning</h3>
+            <p class="sub">MPC planerar värmen ett dygn framåt och lär sig huset av sina egna ändringar. PI räknar alltid parallellt: MPC får bara avvika så här mycket från PI:s signal, och PI styr ensam när det är för kallt inne eller när MPC saknar en godkänd plan. När det är för varmt får MPC bara ge mindre värme än PI.</p>
+            <div class="form-grid">
+              <label class="check"><input id="mpc_learning" type="checkbox"><span>Låt MPC styra inom gränsen när aktiv styrning är på</span></label>
+              <label class="field"><span class="field-label">Största avvikelse från PI</span><span class="with-unit"><input id="mpc_max_deviation" type="number" min="0.5" max="3" step="0.5" inputmode="decimal"><span>°C</span></span></label>
+            </div>
             <h3>Signalgränser</h3>
             <div class="form-grid three">
               <label class="field"><span class="field-label">Lägsta signal</span><span class="with-unit"><input id="signal_min" type="number" min="-40" max="50" step="0.5" inputmode="decimal"><span>°C</span></span></label>
@@ -276,7 +282,7 @@
       </div>
     </section>
 
-    <footer>MPC Heat Controller · Förhandsversion 0.18.0 · Lokal drift</footer>
+    <footer>MPC Heat Controller · Förhandsversion 0.19.0 · Lokal drift</footer>
   </main>
 
   <nav class="tabbar" aria-label="Huvudmeny, mobil">

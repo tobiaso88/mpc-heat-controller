@@ -8,7 +8,8 @@ DEFAULT = {"mode": "demo", "target": 21.5, "comfort_min": 21.0, "comfort_max": 2
            "target_climates": [],
            "weather": "", "solar": "", "cloud": "", "pv_power": "", "pv_forecast": "", "applied_signal": "", "pump_outdoor": "", "signal_min": -15.0, "signal_max": 30.0, "max_step": 1.0,
            "pi_kp": 2.0, "pi_ki": 0.1, "pi_limit": 10.0, "pi_rate": 2.0,
-           "watchdog_verified": False, "watchdog_seconds": 0, "exclusive_writer_confirmed": False, "old_automation": "", "auto_restart": False}
+           "watchdog_verified": False, "watchdog_seconds": 0, "exclusive_writer_confirmed": False, "old_automation": "", "auto_restart": False,
+           "mpc_learning": False, "mpc_max_deviation": 2.0}
 
 def validate(raw):
     if not isinstance(raw, dict) or set(raw) - set(DEFAULT):
@@ -20,9 +21,11 @@ def validate(raw):
     for k in ("target", "comfort_min", "comfort_max", "signal_min", "signal_max", "max_step", "pi_kp", "pi_ki", "pi_limit", "pi_rate"):
         if isinstance(c[k], bool) or not isinstance(c[k], (float, int)) or not math.isfinite(c[k]):
             raise ValueError("Ogiltigt numeriskt värde: " + k)
+    if isinstance(c['mpc_max_deviation'], bool) or not isinstance(c['mpc_max_deviation'], (float, int)) or not 0.5 <= c['mpc_max_deviation'] <= 3:
+        raise ValueError('Största avvikelse från PI måste vara 0,5–3 °C')
     if not (0 <= c['pi_kp'] <= 20 and 0 <= c['pi_ki'] <= 5 and 0 < c['pi_limit'] <= 30 and 0 < c['pi_rate'] <= 20):
         raise ValueError('PI-parametrar ligger utanför tillåtna gränser')
-    if any(type(c[k]) is not bool for k in ('watchdog_verified','exclusive_writer_confirmed','auto_restart')):
+    if any(type(c[k]) is not bool for k in ('watchdog_verified','exclusive_writer_confirmed','auto_restart','mpc_learning')):
         raise ValueError('Ogiltig bekräftelse')
     if type(c['watchdog_seconds']) is not int or not 0<=c['watchdog_seconds']<=86400:
         raise ValueError('Ange watchdog-timeout i hela sekunder')

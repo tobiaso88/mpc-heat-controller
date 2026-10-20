@@ -1,4 +1,4 @@
-# MPC Heat Controller 0.18.0
+# MPC Heat Controller 0.19.0
 
 ## Grundläge och aktiv PI
 
@@ -93,6 +93,26 @@ Flytten ändrar inga värden. Mätte den gamla och den nya givaren olika, till e
 Före flytten sparas säkerhetskopior av `measurements.sqlite` och `model.sqlite` i `/data/backups/`. De tre senaste behålls. Misslyckas något steg, även att spara inställningen, återställs båda databaserna. Flytten nekas om den nya givaren redan finns i loggen under den gamla givarens period, eller om den gamla givaren även hade en annan roll. Byte av utegivare är en teknisk ändring och stoppar aktiv PI som tidigare.
 
 API: `POST /api/outdoor/migrate` med `{"config": {...}, "confirm": true}`.
+
+## MPC-inlärning i 0.19.0
+
+Under Inställningar → Avancerat → *MPC-inlärning* kan MPC få styra värmen när aktiv styrning är på. Förvalet är avstängt. Att slå på eller ändra inställningen stoppar aktiv styrning som andra tekniska ändringar; starta den sedan igen på Hem.
+
+Varje minut räknar både PI och MPC. MPC:s signal för nästa timme skickas, men aldrig mer än *Största avvikelse från PI* (förval 2 °C) från PI:s signal. PI styr ensam när:
+
+- innetemperaturen är under komfortområdet,
+- ingen modell är godkänd för inlärning eller ingen plan ryms inom signalgränser och ändringstakt,
+- planen är äldre än 15 minuter.
+
+När det är varmare än komfortområdet får MPC bara ge mindre värme (högre signal) än PI. Watchdog, signalgränser, *Maximal signaländring*, kvittens från Home Assistant och stopp vid fel gäller oförändrat.
+
+Godkännandet för inlärning är lösare än för skuggförslag men behåller säkerhetskontrollerna: rätt signalriktning och rimlig storlek, minst 24 valideringsfönster, MAE högst 0,8 °C vid 1, 6, 12 och 24 h och bättre än persistens för nästa timme. Den godkända modell med lägst fel används. Solcellsmodellen används när prognosen täcker hela dygnet, annars temperaturmodellen.
+
+Planeringen lägger till en dygnsprofil: modellens genomsnittliga entimmesfel per klockslag de senaste sju dygnen (minst tre värden per klockslag, högst ±0,3 °C per timme). Den beskriver värme modellen saknar indata för, till exempel matlagning, närvaro och kvällssol, och gör att MPC kan dra ner värmen före kvällen.
+
+Modellen tränas om varje dygn. Data där MPC har ändrat signalen oberoende av vädret gör det möjligt att skilja signalens effekt från utetemperaturens, vilket PI-data inte gör.
+
+Historikgrafen på Hem har raden *Styrdes av* (grön = MPC, lila = PI) och visar Ohmigos inställda värde i grönt när MPC styrde. Valet loggas varje minut i tabellen `control_samples` och sparas i 90 dagar. Styrkortet visar vem som styr nu och orsaken.
 
 ## Ta bort en rumsgivare och behålla historiken
 

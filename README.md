@@ -2,6 +2,10 @@
 
 Home Assistant-app för komfortvärme med eget webbgränssnitt, PI och experimentell modellutvärdering. Mål: HA OS 2026.9.1, Raspberry Pi 4 aarch64, 8 GB.
 
+## Version 0.19.0
+
+- MPC-inlärning: MPC kan styra värmen när aktiv styrning är på, inom ±2 °C från PI:s signal. PI räknar alltid parallellt och tar över när det är för kallt inne eller när MPC saknar en godkänd plan. MPC lär sig av sina egna ändringar och av husets dygnsrytm. Historikgrafen visar vem som styrde.
+
 ## Version 0.18.0
 
 - Tar du bort en styrande rumsgivare kan appen behålla historiken. Tidigare mätningar räknas om till medelvärdet av de kvarvarande rummen, så att husmodellen tränas om direkt i stället för att samla 250 nya timmar. Säkerhetskopia tas först.

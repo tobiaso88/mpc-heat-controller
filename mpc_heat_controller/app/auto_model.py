@@ -12,7 +12,7 @@ from . import model_store
 from .comparison import features
 from .pv_history import recovered_zeros
 
-QUALITY_VERSION = 3
+QUALITY_VERSION = 4
 QUALITY_HORIZONS = (6, 12, 24)
 # Absolute limit for display-only shadow proposals, still bounded by persistence.
 MAX_MAE = 0.35
@@ -21,6 +21,12 @@ MIN_WINDOWS = 24
 RESPONSE_HOURS = 12
 MIN_SIGNAL_RESPONSE = -6.0
 MAX_SIGNAL_RESPONSE = 0.0
+
+# Learning mode: active MPC within a band around PI, so a weaker model is acceptable.
+PROFILE_DAYS = 7
+PROFILE_MIN_SAMPLES = 3
+PROFILE_LIMIT = 0.3
+PLAN_MAX_AGE = timedelta(minutes=15)
 
 MIN_COMPLETE_HOURS = 250
 CHECK_INTERVAL = timedelta(hours=1)
@@ -135,8 +141,9 @@ def forecast_day(forecast, blockers=None):
         return reject('Väderprognosen innehåller ogiltiga timvärden eller tidsstämplar.')
 
 
-def live_plan(report, indoor, applied, forecast, config, output=None, history=None, blockers=None):
-    """Display-only hourly plan; each signal is on the output's 0.5 °C grid."""
+def live_plan(report, indoor, applied, forecast, config, output=None, history=None, blockers=None, profile=None):
+    """Hourly plan; each signal is on the output's 0.5 °C grid. `profile` adds a learned
+    hour-of-day disturbance (°C/h, keyed by UTC hour) to every predicted step."""
     def reject(reason):
         if blockers is not None: blockers.append(reason)
         return []
@@ -186,7 +193,7 @@ def live_plan(report, indoor, applied, forecast, config, output=None, history=No
                     points = dict(previous_points)
                     points[current] = (temperature, outside, signal) + ((float(row[field]),) if field else ())
                     temperatures = {t: values[0] for t, values in points.items()}
-                    predicted=temperature+_predict(model,features(points,current,temperatures,lag))
+                    predicted=temperature+_predict(model,features(points,current,temperatures,lag))+(profile or {}).get(current.hour,0.0)
                     if not math.isfinite(predicted) or abs(predicted)>100: continue
                     violation=max(config['comfort_min']-predicted,0,predicted-config['comfort_max'])
                     score=cost+(predicted-config['target'])**2+20*violation**2+0.02*(signal-previous)**2
@@ -258,14 +265,55 @@ def quality(report, name=None):
     return reasons
 
 
+def learning_quality(report, name):
+    """Rejection reasons for MPC learning mode: correct signal direction, stable and below the
+    absolute ceiling at every horizon, and better than persistence for the next hour."""
+    reasons = [r for r in quality(report, name) if 'signalrespons' in r or 'solcellseffekt' in r]
+    metrics = {m['hours']: m for m in (report or {}).get('metrics', [])}
+    for h in (1,) + QUALITY_HORIZONS:
+        m = metrics.get(h, {})
+        mae = m.get('lag_mae' if name == 'lag6' else 'mae', float('inf'))
+        if m.get('windows', 0) < MIN_WINDOWS:
+            reasons.append(f'{name} {h} h: {m.get("windows", 0)} fönster; kräver ≥ {MIN_WINDOWS}.')
+        if not math.isfinite(mae) or mae > HARD_MAX_MAE:
+            reasons.append(f'{name} {h} h: MAE {mae} °C; inlärning kräver ≤ {HARD_MAX_MAE} °C.')
+        if h == 1 and not mae <= m.get('baseline_mae', float('nan')):
+            reasons.append(f'{name} 1 h: MAE {mae} °C > persistens {m.get("baseline_mae")} °C.')
+    return reasons
+
+
+def _total_mae(report, name):
+    return sum(m['lag_mae' if name == 'lag6' else 'mae'] for m in report['metrics'] if m['hours'] in QUALITY_HORIZONS)
+
+
 def select_model(report):
-    checks = {m['name']: quality(report, m['name']) for m in report['models'] if m['name'] in ('linear', 'lag6')}
+    names = [m['name'] for m in report['models'] if m['name'] in ('linear', 'lag6')]
+    checks = {name: quality(report, name) for name in names}
     report['quality_version'] = QUALITY_VERSION
     report['quality_reasons'] = checks
     approved = [name for name, reasons in checks.items() if not reasons]
-    report['selected_model'] = min(approved, key=lambda name: sum(
-        m['lag_mae' if name == 'lag6' else 'mae'] for m in report['metrics'] if m['hours'] in QUALITY_HORIZONS)) if approved else None
+    report['selected_model'] = min(approved, key=lambda name: _total_mae(report, name)) if approved else None
+    learning = {name: learning_quality(report, name) for name in names}
+    report['learning_reasons'] = learning
+    usable = [name for name, reasons in learning.items() if not reasons]
+    report['learning_model'] = min(usable, key=lambda name: _total_mae(report, name)) if usable else None
     return bool(approved)
+
+
+def disturbance_profile(report, name, points, clock):
+    """Mean one-step model error per UTC hour over recent days: heat the model has no input for,
+    such as cooking, people and evening sun. Hours with too few samples get no correction."""
+    model = next(m for m in report['models'] if m['name'] == name)
+    lag, hour = name == 'lag6', timedelta(hours=1)
+    temperatures = {t: v[0] for t, v in points.items()}
+    errors = defaultdict(list)
+    for t in points:
+        if not clock-timedelta(days=PROFILE_DAYS) <= t < clock-hour or not all(t+i*hour in points for i in range(-6, 2)):
+            continue
+        error = temperatures[t+hour]-temperatures[t]-_predict(model, features(points, t, temperatures, lag))
+        if math.isfinite(error):
+            errors[t.hour].append(error)
+    return {h: max(-PROFILE_LIMIT, min(PROFILE_LIMIT, sum(v)/len(v))) for h, v in errors.items() if len(v) >= PROFILE_MIN_SAMPLES}
 
 
 class AutoModel:
@@ -273,6 +321,54 @@ class AutoModel:
         self.data = data
         self.lock = threading.Lock()
         self.last_check = None
+        self.points_cache = {}
+
+    def hourly_points(self, mapping, clock):
+        """Logged hours for a mapping, read at most once per UTC hour."""
+        key = (json.dumps(mapping, sort_keys=True), clock.replace(minute=0, second=0, microsecond=0))
+        if key not in self.points_cache:
+            self.points_cache = {key: local_points(self.data, mapping)[0]}
+        return self.points_cache[key]
+
+    def learning(self, config, saved, inside, applied, forecast, output, clock):
+        """Plan for MPC learning mode from the best usable model; reasons when none is usable."""
+        status = saved.get('status') or {}
+        report = saved.get('report')
+        if status.get('state') == 'ready' and report:
+            candidates = [report] + ([report['fallback']] if report.get('fallback') else [])
+        else:
+            evaluations = status.get('evaluations') or {}
+            candidates = [evaluations[k] for k in ('pv', 'cloud', 'temperature') if evaluations.get(k)]
+        reasons = []
+        for candidate in candidates:
+            mapping = candidate.get('mapping') or {}
+            if mapping != mapping_for(config, auto_cloud=bool(mapping.get('cloud_auto')), pv_baseline=bool(mapping.get('pv_baseline'))):
+                reasons.append('Modellen är tränad med ett annat givarval.')
+                continue
+            names = [m['name'] for m in candidate.get('models', []) if m['name'] in ('linear', 'lag6')]
+            usable = [n for n in names if not learning_quality(candidate, n)]
+            if not usable:
+                reasons += [r for n in names for r in learning_quality(candidate, n)]
+                continue
+            try:
+                points = self.hourly_points(mapping, clock)
+            except (OSError, sqlite3.Error):
+                reasons.append('Mätloggen kunde inte läsas.')
+                continue
+            for name in sorted(usable, key=lambda n: _total_mae(candidate, n)):
+                try:
+                    profile = disturbance_profile(candidate, name, points, clock)
+                except (KeyError, StopIteration, ValueError, TypeError, OverflowError):
+                    reasons.append(f'{name}: dygnsprofilen kunde inte beräknas.')
+                    continue
+                blockers = []
+                plan = live_plan(dict(candidate, selected_model=name), inside, applied, forecast, config, output, points, blockers, profile)
+                if plan:
+                    return {'state': 'ready', 'model': name, 'source': 'pv' if mapping.get('pv_power') else 'cloud' if mapping.get('cloud') else 'temperature',
+                            'signal': plan[0]['signal'], 'plan': plan, 'planned_at': clock.isoformat(),
+                            'profile': {str(h): round(v, 4) for h, v in sorted(profile.items())}}
+                reasons += blockers
+        return {'state': 'blocked', 'reasons': list(dict.fromkeys(reasons)) or ['Ingen modell är tränad ännu.'], 'plan': []}
 
     def maybe_train(self, config, clock=None):
         clock = clock or datetime.now(timezone.utc)
@@ -431,4 +527,13 @@ class AutoModel:
         elif plan:
             message += (' Sol- eller molnprognos saknas; utetemperaturmodellen används.' if fallback_used else '')
             message += ' MPC-förslaget är endast skuggläge och skickas inte.'
-        return dict(status, report=report, plan=plan, message=message, plan_blockers=blockers if not plan else [])
+        result = dict(status, report=report, plan=plan, message=message, plan_blockers=blockers if not plan else [])
+        if config.get('mpc_learning'):
+            learning = self.learning(config, saved, inside, applied, forecast, output, datetime.now(timezone.utc))
+            result['learning'] = learning
+            if learning['plan']:
+                result['plan'] = learning['plan']
+                result['message'] = message + ' MPC-inlärning: planen används inom ±' + f"{config['mpc_max_deviation']:g}".replace('.', ',') + ' °C från PI när styrningen är aktiv.'
+            else:
+                result['message'] = message + ' MPC-inlärning väntar: ' + ' '.join(learning['reasons'][:3])
+        return result
