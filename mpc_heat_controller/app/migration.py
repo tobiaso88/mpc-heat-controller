@@ -1,8 +1,9 @@
-"""Explicit, user-confirmed transfer of logged outdoor history to a replacement sensor.
+"""Explicit, user-confirmed changes to logged sensor selections.
 
-Values are not changed: earlier measurements from the old sensor are relabelled as the new
-sensor so the automatic model keeps its training period. Both databases are backed up first
-and restored if any step fails.
+Values are not changed: earlier measurements from an old outdoor sensor are relabelled as the
+new sensor, or removed room sensors stop counting towards the logged indoor mean, so the
+automatic model keeps its training period. Both databases are backed up first and restored if
+any step fails.
 """
 import json
 import sqlite3
@@ -111,6 +112,44 @@ def migrate_outdoor(data, old, new):
                             db.execute('UPDATE automatic SET report=?, status=? WHERE id=1',
                                        (json.dumps(report, allow_nan=False) if report is not None else None,
                                         json.dumps(status, allow_nan=False) if status is not None else None))
+    except Exception:
+        for name, path in backups.items():
+            _copy(path, data / f'{name}.sqlite')
+        raise
+    return result
+
+
+def remove_indoor(data, old, new):
+    """Drop room sensors from the logged indoor selection so history matches the smaller set.
+
+    Readings are not changed; the removed sensors simply stop counting towards the logged mean.
+    The previous list is kept per sample so archived shadow proposals can still be followed up.
+    The saved model is left as it is and is retrained on the new mean at the next check.
+    """
+    old, new = list(old or []), list(new or [])
+    if not new or not set(new) < set(old) or len(set(new)) != len(new):
+        raise ValueError('Historiken kan bara behållas när en eller flera styrande rumsgivare tas bort och minst en finns kvar.')
+    measurements = data / 'measurements.sqlite'
+    if not measurements.exists():
+        raise ValueError('Det finns ingen mätlogg att behålla.')
+    stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+    backups = _backup(data, stamp)
+    result = {'removed': sorted(set(old) - set(new)), 'kept': new, 'samples': 0,
+              'backup': str(backups['measurements'].relative_to(data)),
+              'backups': {name: str(path.relative_to(data)) for name, path in backups.items()}}
+    try:
+        with closing(sqlite3.connect(measurements)) as db:
+            with db:
+                for stamp_row, raw_settings in db.execute('SELECT time, settings FROM samples').fetchall():
+                    settings = json.loads(raw_settings)
+                    if sorted(settings.get('indoor') or []) != sorted(old):
+                        continue
+                    settings.setdefault('indoor_previous', []).append(settings['indoor'])
+                    settings['indoor'] = new
+                    db.execute('UPDATE samples SET settings=? WHERE time=?', (json.dumps(settings), stamp_row))
+                    result['samples'] += 1
+                db.execute('CREATE TABLE IF NOT EXISTS migrations (time TEXT PRIMARY KEY, kind TEXT NOT NULL, detail TEXT NOT NULL)')
+                db.execute('INSERT INTO migrations VALUES (?,?,?)', (datetime.now(timezone.utc).isoformat(), 'indoor', json.dumps(result)))
     except Exception:
         for name, path in backups.items():
             _copy(path, data / f'{name}.sqlite')

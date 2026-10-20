@@ -20,7 +20,7 @@ from .history_export import build as export_history
 from .trends import read as read_trends
 from .shadow_evaluation import read as read_shadow_evaluation
 from .pv_forecast import energy_data, sources as pv_sources
-from .migration import migrate_outdoor, restore as restore_migration
+from .migration import migrate_outdoor, remove_indoor, restore as restore_migration
 
 DATA = Path(os.environ.get("MPC_DATA", "./data"))
 STATIC = Path(__file__).parent / "static"
@@ -221,6 +221,24 @@ class Handler(BaseHTTPRequestHandler):
                     except Exception:
                         restore_migration(DATA,result['backups'])
                         raise
+                if COLLECTOR: COLLECTOR.wake.set()
+                return self.reply(200,{'config':c,'migration':result})
+            if self.path == "/api/indoor/migrate":
+                payload=json.loads(body)
+                if payload.get('confirm') is not True:raise ValueError('Bekräfta att historiken ska behållas')
+                c=validate(payload['config'])
+                lock=COLLECTOR.cycle_lock if COLLECTOR else LOCK
+                with lock:
+                    previous=config()
+                    if c['outdoor']!=previous['outdoor']:raise ValueError('Spara bytet av utegivare separat.')
+                    result=remove_indoor(DATA,previous['indoor'],c['indoor'])
+                    try:
+                        apply_config(c) if COLLECTOR else save(c)
+                    except Exception:
+                        restore_migration(DATA,result['backups'])
+                        raise
+                    # Retrain on the kept history at the next cycle instead of after the hourly check interval.
+                    if COLLECTOR: COLLECTOR.auto_model.last_check=None
                 if COLLECTOR: COLLECTOR.wake.set()
                 return self.reply(200,{'config':c,'migration':result})
             if self.path == "/api/history": return self.reply(200, inspect_csv(body))

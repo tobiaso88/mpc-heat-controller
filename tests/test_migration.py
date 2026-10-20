@@ -10,7 +10,7 @@ from unittest.mock import patch
 from app import model_store
 from app.auto_model import local_points, mapping_for
 from app.core import validate
-from app.migration import migrate_outdoor
+from app.migration import migrate_outdoor, remove_indoor
 from app.shadow_evaluation import read
 from app.telemetry import Collector
 
@@ -105,6 +105,62 @@ class OutdoorMigrationTests(unittest.TestCase):
                 clock.now.return_value = datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(minutes=len(target) + ord(target[-1]))
                 migrate_outdoor(self.data, current, target)
         self.assertEqual(len(list((self.data / 'backups').glob('measurements-*.sqlite'))), 3)
+
+
+class IndoorRemovalTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.data = Path(self.directory.name)
+        self.old = validate({'mode': 'shadow', 'indoor': ['sensor.wall', 'sensor.room'], 'outdoor': 'sensor.old_out',
+                             'applied_signal': 'number.signal', 'weather': 'weather.x'})
+        self.new = dict(self.old, indoor=['sensor.room'])
+
+    def tearDown(self):
+        self.directory.cleanup()
+
+    def test_history_matches_remaining_rooms_without_changing_readings(self):
+        collector, start = logged(self.data, self.old, extra=[('sensor.wall', 'Reglering', 18.0)])
+        self.assertEqual(local_points(self.data, mapping_for(self.new))[0], {})
+        with sqlite3.connect(self.data / 'measurements.sqlite') as db:
+            readings_before = db.execute('SELECT readings FROM samples ORDER BY time').fetchall()
+        model_store.save_auto(self.data, {'mapping': mapping_for(self.old)}, {'state': 'ready'})
+
+        result = remove_indoor(self.data, self.old['indoor'], self.new['indoor'])
+
+        self.assertEqual((result['samples'], result['removed']), (12, ['sensor.wall']))
+        points = local_points(self.data, mapping_for(self.new))[0]
+        self.assertEqual(len(points), 6)
+        self.assertTrue(all(p[0] == 21.0 for p in points.values()))
+        with sqlite3.connect(self.data / 'measurements.sqlite') as db:
+            self.assertEqual(db.execute('SELECT readings FROM samples ORDER BY time').fetchall(), readings_before)
+            settings = json.loads(db.execute('SELECT settings FROM samples LIMIT 1').fetchone()[0])
+            self.assertEqual(db.execute('SELECT kind FROM migrations').fetchone()[0], 'indoor')
+        self.assertEqual(settings['indoor_previous'], [['sensor.wall', 'sensor.room']])
+        # The model was trained on another mean and must be retrained, not relabelled.
+        self.assertEqual(model_store.load_auto(self.data)['report']['mapping'], mapping_for(self.old))
+        self.assertTrue((self.data / result['backups']['measurements']).exists())
+
+    def test_archived_proposals_are_still_followed_up_with_their_own_mean(self):
+        collector, start = logged(self.data, self.old, hours=30, extra=[('sensor.wall', 'Reglering', 18.0)])
+        collector.store_mpc(start.isoformat(), {'state': 'ready', 'plan': [{'datetime': (start + timedelta(hours=1)).isoformat(), 'indoor': 19.5, 'signal': 1.5}]},
+                            {'entity': 'weather.x', 'fetched_at': start.isoformat(), 'points': [{'datetime': (start + timedelta(hours=1)).isoformat(), 'temperature': 3}]}, self.old)
+        with patch('app.shadow_evaluation.datetime', wraps=datetime) as clock:
+            clock.now.return_value = start + timedelta(hours=30)
+            before = read(self.data)
+        # Mean of the wall sensor (18.0) and the room (21.0), as logged when proposed.
+        self.assertEqual(before['proposals'][0]['points'][0]['actual_indoor'], 19.5)
+        remove_indoor(self.data, self.old['indoor'], self.new['indoor'])
+        with patch('app.shadow_evaluation.datetime', wraps=datetime) as clock:
+            clock.now.return_value = start + timedelta(hours=30)
+            self.assertEqual(read(self.data), before)
+
+    def test_rejects_anything_but_a_removal(self):
+        logged(self.data, self.old)
+        for old, new in [(['sensor.room'], ['sensor.room']), (['sensor.wall', 'sensor.room'], []),
+                         (['sensor.room'], ['sensor.other']), (['sensor.wall', 'sensor.room'], ['sensor.room', 'sensor.other'])]:
+            with self.assertRaises(ValueError):
+                remove_indoor(self.data, old, new)
+        self.assertFalse((self.data / 'backups').exists())
 
 
 if __name__ == '__main__':

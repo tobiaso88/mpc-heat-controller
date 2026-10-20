@@ -12,7 +12,8 @@ def _time(value):
 def _nearest(samples, target, mapping, entity):
     best = None
     for stamp, readings, settings in samples:
-        if (settings.get('indoor') != mapping['indoor'] or
+        # A removed room sensor keeps its readings; earlier proposals still use the earlier mean.
+        if (mapping['indoor'] != settings.get('indoor') and mapping['indoor'] not in settings.get('indoor_previous', []) or
                 settings.get('outdoor') != mapping['outdoor'] or
                 settings.get('solar', '') != mapping['solar'] or
                 settings.get('cloud', '') != ('' if mapping.get('cloud_auto') else mapping['cloud']) or

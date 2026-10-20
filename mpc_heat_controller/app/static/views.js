@@ -497,7 +497,7 @@ async function restoreModel() {
 }
 
 /* SETTINGS ================================================================= */
-let draft = null, outdoorChoice = 'restart';
+let draft = null, outdoorChoice = 'restart', indoorChoice = 'keep';
 const unit = e => e.attributes?.unit_of_measurement;
 const isSensor = (e, units) => e.entity_id.startsWith('sensor.') && units.includes(unit(e));
 const PICKERS = {
@@ -588,6 +588,22 @@ function renderOutdoorHistory() {
     option('restart', 'Börja om insamlingen', `Husmodellen samlar en ny period på minst ${MIN_HOURS} timmar med den nya givaren. Bäst om givarna mäter olika, t.ex. olika placering i sol.`),
     option('migrate', 'Flytta historiken till den nya givaren', `Tidigare värden från ${entityName(state.settings.outdoor)} räknas som ${entityName(draft.outdoor)}. Modell och skuggförslag fortsätter direkt. Värdena ändras inte – mäter givarna olika blandas två givares mätningar. En säkerhetskopia tas först.`));
 }
+function indoorRemoval() {
+  const old = state.settings.indoor || [], now = draft.indoor || [];
+  return draft.mode === 'shadow' && !outdoorMigration() && now.length > 0 && now.length < old.length && now.every(e => old.includes(e)) && new Set(now).size === now.length;
+}
+function renderIndoorHistory() {
+  const box = $('indoor-history'), show = indoorRemoval();
+  box.hidden = !show;
+  if (!show) { indoorChoice = 'keep'; return; }
+  const removed = state.settings.indoor.filter(e => !draft.indoor.includes(e)).map(entityName).join(', ');
+  const option = (value, title, text) => h('label', {class: 'choice'},
+    h('input', {type: 'radio', name: 'indoor-history', value, checked: indoorChoice === value, onchange: () => { indoorChoice = value; changed(); }}),
+    h('span', {}, h('strong', {text: title}), h('small', {text})));
+  box.replaceChildren(h('strong', {text: 'Vad ska hända med historiken?'}),
+    option('keep', 'Behåll historiken utan borttagna givare', `Tidigare mätningar räknas om till medelvärdet av de kvarvarande rummen; ${removed} räknas inte längre. Inga värden ändras och husmodellen tränas om direkt. En säkerhetskopia tas först.`),
+    option('restart', 'Börja om insamlingen', `Husmodellen samlar en ny period på minst ${MIN_HOURS} timmar med det nya rumsurvalet.`));
+}
 function changedKeys() { return Object.keys(draft).filter(k => JSON.stringify(draft[k]) !== JSON.stringify(state.settings[k])); }
 function validateDraft() {
   const errors = {};
@@ -615,7 +631,9 @@ function changed() {
   $('save').disabled = !!firstError;
   renderComfortBar();
   renderOutdoorHistory();
+  renderIndoorHistory();
   if (!firstError && outdoorMigration() && outdoorChoice === 'migrate') $('savebar-detail').textContent += ' · Historiken flyttas till den nya utegivaren.';
+  if (!firstError && indoorRemoval() && indoorChoice === 'keep') $('savebar-detail').textContent += ' · Historiken behålls utan borttagna rumsgivare.';
 }
 function renderComfortBar() {
   const lo = Math.min(15, draft.comfort_min - 1), hi = Math.max(27, draft.comfort_max + 1), pct = v => Math.max(0, Math.min(100, (v - lo) / (hi - lo) * 100)) + '%';
@@ -637,14 +655,18 @@ async function saveSettings() {
   const keys = changedKeys(), comfortOnly = keys.every(k => COMFORT_KEYS.includes(k)), wasActive = ['active', 'pending'].includes(controlState());
   $('save').disabled = true;
   try {
-    let moved = null;
+    let moved = null, kept = null;
     if (outdoorMigration() && outdoorChoice === 'migrate') {
       const result = await api('outdoor/migrate', {config: draft, confirm: true});
       state.settings = result.config; moved = result.migration;
+    } else if (indoorRemoval() && indoorChoice === 'keep') {
+      const result = await api('indoor/migrate', {config: draft, confirm: true});
+      state.settings = result.config; kept = result.migration;
     } else state.settings = await api('config', draft);
-    draft = structuredClone(state.settings); outdoorChoice = 'restart'; fillForm();
-    toast((moved ? `Historiken är flyttad: ${num(moved.samples, 0)} mätningar och ${num(moved.forecasts, 0)} arkiverade förslag. Säkerhetskopia: ${moved.backup}. ` : 'Inställningarna är sparade. ')
-      + (!comfortOnly && wasActive ? 'Aktiv styrning stoppades – starta den igen på Hem.' : ''), {tone: !comfortOnly && wasActive ? 'err' : 'ok', timeout: moved ? 12000 : 5000});
+    draft = structuredClone(state.settings); outdoorChoice = 'restart'; indoorChoice = 'keep'; fillForm();
+    toast((moved ? `Historiken är flyttad: ${num(moved.samples, 0)} mätningar och ${num(moved.forecasts, 0)} arkiverade förslag. Säkerhetskopia: ${moved.backup}. `
+      : kept ? `Historiken är behållen: ${num(kept.samples, 0)} mätningar räknas utan borttagna rumsgivare. Säkerhetskopia: ${kept.backup}. ` : 'Inställningarna är sparade. ')
+      + (!comfortOnly && wasActive ? 'Aktiv styrning stoppades – starta den igen på Hem.' : ''), {tone: !comfortOnly && wasActive ? 'err' : 'ok', timeout: moved || kept ? 12000 : 5000});
     refresh();
   } catch (e) { toast(e.message, {tone: 'err'}); } finally { $('save').disabled = false; }
 }
@@ -655,7 +677,7 @@ function initSettings() {
   for (const r of document.querySelectorAll('input[name=mode]')) r.addEventListener('change', ev => { draft.mode = ev.target.value; changed(); });
   $('settings-form').addEventListener('submit', ev => { ev.preventDefault(); saveSettings(); });
   $('save').onclick = saveSettings;
-  $('discard').onclick = () => { draft = structuredClone(state.settings); outdoorChoice = 'restart'; fillForm(); };
+  $('discard').onclick = () => { draft = structuredClone(state.settings); outdoorChoice = 'restart'; indoorChoice = 'keep'; fillForm(); };
   $('pv-refresh').onclick = async () => { $('pv-source-status').textContent = 'Söker installerade Forecast.Solar-källor…'; await loadPvSources(); $('pv-source-status').textContent = state.pvMessage; document.querySelectorAll('[data-picker=pv_forecast]').forEach(renderPicker); };
   window.addEventListener('beforeunload', ev => { if (changedKeys().length) { ev.preventDefault(); ev.returnValue = ''; } });
   const links = [...document.querySelectorAll('.section-nav a')];

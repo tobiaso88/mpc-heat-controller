@@ -1,3 +1,9 @@
+# 0.18.0
+
+- När en eller flera styrande rumsgivare tas bort kan historiken behållas. Mätloggens givarval uppdateras så att tidigare mätningar räknas som medelvärdet av de kvarvarande rummen. Inga mätvärden ändras och de borttagna givarnas värden finns kvar i loggen. Husmodellen tränas om på den behållna historiken vid nästa kontroll i stället för att samla 250 nya timmar.
+- Den sparade modellen märks inte om, eftersom den tränats på ett annat medelvärde. Arkiverade skuggförslag följs fortsatt upp mot det medelvärde som gällde när de gjordes.
+- Säkerhetskopior av `measurements.sqlite` och `model.sqlite` sparas i `/data/backups/` före ändringen. Byte av rumsgivare är en teknisk ändring och stoppar aktiv PI som tidigare. Kvalitetskrav och PI är oförändrade.
+
 # 0.17.1
 
 - Rättar att MPC-skuggförslaget kunde låta innetemperaturen sjunka under komfortområdet inför en kall natt. Planeraren behöll bara de 60 billigaste banorna hittills, så banor som började värma tidigt sorterades bort när huset var varmt i början. Nu behålls de tre billigaste banorna per signalnivå. Med en prognos formad som en verklig kall natt höjdes lägsta prognostiserade innetemperatur från 19,4 till 20,8 °C med samma modell.

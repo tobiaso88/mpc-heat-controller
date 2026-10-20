@@ -1,4 +1,4 @@
-# MPC Heat Controller 0.17.1
+# MPC Heat Controller 0.18.0
 
 ## Grundläge och aktiv PI
 
@@ -93,6 +93,17 @@ Flytten ändrar inga värden. Mätte den gamla och den nya givaren olika, till e
 Före flytten sparas säkerhetskopior av `measurements.sqlite` och `model.sqlite` i `/data/backups/`. De tre senaste behålls. Misslyckas något steg, även att spara inställningen, återställs båda databaserna. Flytten nekas om den nya givaren redan finns i loggen under den gamla givarens period, eller om den gamla givaren även hade en annan roll. Byte av utegivare är en teknisk ändring och stoppar aktiv PI som tidigare.
 
 API: `POST /api/outdoor/migrate` med `{"config": {...}, "confirm": true}`.
+
+## Ta bort en rumsgivare och behålla historiken
+
+När du tar bort en eller flera givare under *Rum som styr värmen*, och minst en finns kvar, frågar appen vad som ska hända med historiken:
+
+- **Behåll historiken utan borttagna givare** (förval): tidigare mätningar räknas som medelvärdet av de kvarvarande rummen. Husmodellen tränas om direkt på den behållna perioden.
+- **Börja om insamlingen**: husmodellen samlar en ny period på minst 250 kompletta timmar med det nya rumsurvalet.
+
+Inga mätvärden ändras. Bara mätloggens givarval uppdateras, och tidigare urval sparas i fältet `indoor_previous`. De borttagna givarnas värden finns kvar i loggen och i exporten. Den sparade modellen märks inte om, eftersom den tränats på ett annat medelvärde. Arkiverade skuggförslag följs upp mot det medelvärde som gällde när de gjordes. Ändringen loggas i tabellen `migrations`. Säkerhetskopior tas som vid byte av utegivare. Byte av utegivare och borttagning av rumsgivare måste sparas var för sig. Ändringen stoppar aktiv PI som andra tekniska ändringar.
+
+API: `POST /api/indoor/migrate` med `{"config": {...}, "confirm": true}`.
 
 ## Grafer och mobilgränssnitt i 0.9.5
 
