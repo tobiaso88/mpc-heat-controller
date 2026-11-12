@@ -10,9 +10,9 @@ from datetime import datetime, timezone, timedelta
 from .model import evaluate_points
 from . import model_store
 from .comparison import features
-from .pv_history import recovered_zeros
+from .pv_history import recovered_zeros, STALE_PV, is_zero
 
-QUALITY_VERSION = 4
+QUALITY_VERSION = 5
 QUALITY_HORIZONS = (6, 12, 24)
 # Absolute limit for display-only shadow proposals, still bounded by persistence.
 MAX_MAE = 0.35
@@ -65,6 +65,7 @@ def local_points(data, mapping):
     buckets = defaultdict(lambda: defaultdict(list))
     excluded = 0
     pv_samples = []
+    stale_zero_hours = set()
     for stamp, raw_readings, raw_settings in rows:
         try:
             settings = json.loads(raw_settings)
@@ -85,6 +86,8 @@ def local_points(data, mapping):
             if mapping.get('pv_power'):
                 pv_samples.append((moment.astimezone(timezone.utc), next(
                     (r for r in readings if r.get('entity') == mapping['pv_power']), {})))
+                pv = pv_samples[-1][1]
+                if pv.get('quality') == STALE_PV and is_zero(pv): stale_zero_hours.add(hour)
             values = {r['entity']: r['value'] for r in readings
                       if (r.get('quality') == 'OK' or r.get('entity') == mapping['signal'] and mapping['signal'].startswith('number.'))
                       and isinstance(r.get('value'), (int, float))
@@ -104,7 +107,8 @@ def local_points(data, mapping):
             points[hour] = (sum(mean(entity) for entity in mapping['indoor']) / len(mapping['indoor']),
                             mean(mapping['outdoor']), mean(mapping['signal'])) + ((mean(mapping['solar']),) if mapping.get('solar') else (mean(mapping['cloud']),) if mapping.get('cloud') else (mean(mapping['pv_power']),) if mapping.get('pv_power') else ())
     return points, {'samples': len(rows), 'incomplete_hours': len(buckets) - len(points),
-                    'excluded_samples': excluded, 'recovered_pv_zero_samples': len(recovered)}
+                    'excluded_samples': excluded, 'recovered_pv_zero_samples': len(recovered),
+                    'pv_stale_zero_hours': [t.isoformat() for t in sorted(stale_zero_hours-set(points))][-8:]}
 
 
 def _predict(model, values):
@@ -149,6 +153,8 @@ def live_plan(report, indoor, applied, forecast, config, output=None, history=No
         return []
     day = forecast_day(forecast, blockers)
     if not report: return reject('Ingen godkänd modell är tillgänglig.')
+    stale = validation_reasons(report, datetime.now(timezone.utc))
+    if stale: return reject(' '.join(stale))
     if indoor is None: return reject('En eller flera valda rumsgivare saknar giltigt värde.')
     if applied is None: return reject('Ohmigos inställda signal saknar giltigt värde.')
     if not day: return []
@@ -237,10 +243,28 @@ def signal_effect(report, name='linear'):
         return None
 
 
+def validation_reasons(report, clock=None):
+    """Reject stale rolling evidence; legacy offline reports have no period metadata."""
+    if not report or report.get('validation_method') != 'daily_rolling_14d':
+        return []
+    try:
+        end = datetime.fromisoformat(report['validation_end'])
+        data_end = datetime.fromisoformat(report['data_end'])
+        trained = datetime.fromisoformat(report['training_end'])
+        if any(t.tzinfo is None for t in (end, data_end, trained)): raise ValueError()
+        if data_end-end > timedelta(hours=48):
+            return ['Valideringen saknar kompletta testdygn nära senaste mätningen (mer än 48 h).']
+        if clock is not None and (clock-end > timedelta(hours=48) or clock-trained > timedelta(hours=48)):
+            return ['Träning eller validering är äldre än 48 h; PI styr tills färska data har validerats.']
+    except (KeyError, ValueError, TypeError):
+        return ['Modellens tränings- eller valideringsperiod är ogiltig.']
+    return []
+
+
 def quality(report, name=None):
     """Return rejection reasons; an empty list means the candidate passes."""
     name = name or (report or {}).get('selected_model', 'linear')
-    reasons = []
+    reasons = validation_reasons(report)
     effect = signal_effect(report, name)
     if effect is None or not MIN_SIGNAL_RESPONSE <= effect <= MAX_SIGNAL_RESPONSE:
         reasons.append(f'{name}: signalrespons vid 6–12 h = {effect}; kräver {MIN_SIGNAL_RESPONSE} ≤ respons ≤ {MAX_SIGNAL_RESPONSE} °C per °C.')
@@ -268,7 +292,7 @@ def quality(report, name=None):
 def learning_quality(report, name):
     """Rejection reasons for MPC learning mode: correct signal direction, stable and below the
     absolute ceiling at every horizon, and better than persistence for the next hour."""
-    reasons = [r for r in quality(report, name) if 'signalrespons' in r or 'solcellseffekt' in r]
+    reasons = validation_reasons(report) + [r for r in quality(report, name) if 'signalrespons' in r or 'solcellseffekt' in r]
     metrics = {m['hours']: m for m in (report or {}).get('metrics', [])}
     for h in (1,) + QUALITY_HORIZONS:
         m = metrics.get(h, {})
@@ -437,6 +461,7 @@ class AutoModel:
                 if config.get('pv_power'):
                     pv_mapping = mapping_for(config)
                     pv_points, pv_info = local_points(self.data, pv_mapping)
+                    status['pv_diagnostics'] = pv_info
                     if len(pv_points) >= MIN_COMPLETE_HOURS and max(pv_points) >= clock-timedelta(hours=2):
                         try:
                             pv_report = evaluate_points(pv_points, pv_mapping,

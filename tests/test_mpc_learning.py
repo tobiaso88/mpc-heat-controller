@@ -172,11 +172,15 @@ class LearningModelTests(unittest.TestCase):
             states = [{'entity_id': 'number.signal', 'state': '4', 'last_updated': datetime.now(timezone.utc).isoformat(),
                        'attributes': {'unit_of_measurement': '°C', 'min': -15, 'max': 30, 'step': 0.5}}]
             result = trainer.result(c, readings, forecast, states)
-            # lag6 has the lowest error but no recent history in this log, so linear plans.
-            self.assertEqual((result['learning']['state'], result['learning']['model']), ('ready', 'linear'))
+            # With recent logged history, the lowest-error lag6 candidate can plan.
+            self.assertEqual((result['learning']['state'], result['learning']['model']), ('ready', 'lag6'))
             self.assertEqual(result['plan'], result['learning']['plan'])
             self.assertEqual(result['learning']['signal'], result['plan'][0]['signal'])
             self.assertIn('MPC-inlärning', result['message'])
+            # Still fall back to the usable linear candidate if recent lag history is absent.
+            with patch.object(trainer, 'hourly_points', return_value={}):
+                fallback = trainer.result(c, readings, forecast, states)
+            self.assertEqual((fallback['learning']['state'], fallback['learning']['model']), ('ready', 'linear'))
             shadow_only = trainer.result(dict(c, mpc_learning=False), readings, forecast, states)
             self.assertNotIn('learning', shadow_only)
             self.assertEqual(shadow_only['plan'], [])

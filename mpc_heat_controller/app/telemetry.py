@@ -69,8 +69,17 @@ def readings(c, states):
                 if attrs.get('restored'):quality='Återställt värde, väntar på rapport'
         except (ValueError, TypeError, KeyError, AttributeError):
             value = None
-        result.append({'entity': entity, 'name': attrs.get('friendly_name', entity),
-                       'roles': role, 'value': value, 'quality': quality, 'reported_at': stamp, 'timestamp_source': 'last_reported' if s.get('last_reported') else 'last_updated'})
+        item = {'entity': entity, 'name': attrs.get('friendly_name', entity),
+                       'roles': role, 'value': value, 'quality': quality, 'reported_at': stamp, 'timestamp_source': 'last_reported' if s.get('last_reported') else 'last_updated'}
+        if entity == c.get('pv_power') and value == 0:
+            sun = by_id.get('sun.sun', {})
+            item['restored'] = bool(attrs.get('restored'))
+            item['sun'] = {'state': sun.get('state'),
+                           'reported_at': sun.get('last_reported') or sun.get('last_updated'),
+                           'restored': bool(sun.get('attributes', {}).get('restored'))}
+            if quality == 'OK':
+                item['zero_basis'] = 'fresh_report' if age <= 1800 else 'fresh_darkness'
+        result.append(item)
     return result
 
 

@@ -1,3 +1,12 @@
+# 0.20.0
+
+- Ersätter den fasta 70/30-delningen med rullande validering under senaste veckan. Varje testdygn använder modeller tränade på högst 14 tidigare dygn, med minst 168 kompletta timpar. Framtida innetemperaturer används aldrig i testdygnets träning eller rekursiva prognos. Alla modeller och horisonter använder samma teststarter.
+- Driftmodellerna tränas separat på de senaste 14 dygnen efter utvärderingen. Nya driftförhållanden kan därmed ingå direkt i träningen. De slutliga koefficienterna poängsätts inte på sina egna träningsdata; måtten beskriver den dagliga träningsmetoden.
+- Kvalitetsversionen höjs så äldre modeller tränas om. Felgränserna 0,35/0,8 °C, kravet på minst 24 testfönster, signalriktning och persistensjämförelser behålls. Ny färskhetsspärr: mer än 48 timmar sedan senaste valideringsutfall eller driftmodellens träningsslut blockerar liveplanering. En validering mer än 48 timmar bakom underlagets slut underkänns också.
+- Lärande visar träningsperiod och senaste valideringsutfall per modellkälla, samt de senaste solcellstimmarna som saknas på grund av gamla nollvärden. Träffsäkerhetsgrafen följer källan som valts för MPC-inlärning.
+- Solcellsnollor loggas med underlag om solens tillstånd och om nollan stöds av färsk rapport eller mörker. Sparat, färskt mörkerunderlag kan bekräfta gamla nattnollor; uttryckligt dagsljus får aldrig ersättas av den äldre platåregeln. Gamla dagtidsvärden godkänns inte generellt och historiska luckor utan stöd fylls inte.
+- Test mot historiskt timunderlag med en stor börvärdessänkning visar fortsatt för stora fel i färsk validering. Versionen förbättrar anpassning och diagnostik, men garanterar inte att MPC blir godkänd. PI och begränsningen kring PI är oförändrade.
+
 # 0.19.3
 
 - Modellhistorik byggs som ett bakgrundsjobb i en temporär ZIP-fil. Gränssnittet startar jobbet, följer status med korta anrop och hämtar filen först när den är klar. Detta undviker att extern åtkomst måste vänta på hela ZIP-bygget i samma anrop. Endast ett exportjobb körs åt gången; tillfällig fil ersätts vid nästa export.

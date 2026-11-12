@@ -37,3 +37,24 @@ class PVHistoryTests(unittest.TestCase):
         rows = self.plateau()
         rows[0][1]['value'] = 12
         self.assertEqual(recovered_zeros(rows), [])
+
+    def test_saved_darkness_evidence_recovers_only_confirmed_night_zero(self):
+        moment = datetime(2026, 11, 12, 18, tzinfo=timezone.utc)
+        reading = {'value': 0, 'quality': STALE_PV,
+                   'reported_at': (moment-timedelta(hours=2)).isoformat(),
+                   'sun': {'state': 'below_horizon', 'reported_at': moment.isoformat()}}
+        # No future closing report is required when this sample contains fresh darkness evidence.
+        self.assertEqual(recovered_zeros([(moment, reading)]), [moment])
+        for change in ({'state': 'above_horizon'}, {'restored': True},
+                       {'reported_at': (moment-timedelta(hours=1)).isoformat()}):
+            altered = dict(reading, sun={**reading['sun'], **change})
+            self.assertEqual(recovered_zeros([(moment, altered)]), [])
+        for change in ({'value': 12}, {'restored': True}, {'reported_at': 'invalid'},
+                       {'reported_at': (moment-timedelta(hours=19)).isoformat()},
+                       {'quality': 'Saknas'}):
+            self.assertEqual(recovered_zeros([(moment, dict(reading, **change))]), [])
+
+    def test_legacy_plateau_cannot_override_saved_daylight(self):
+        rows = self.plateau()
+        rows[30][1]['sun'] = {'state': 'above_horizon', 'reported_at': rows[30][0].isoformat()}
+        self.assertEqual(recovered_zeros(rows), [])

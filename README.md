@@ -2,6 +2,10 @@
 
 Home Assistant-app för komfortvärme med eget webbgränssnitt, PI och experimentell modellutvärdering. Mål: HA OS 2026.9.1, Raspberry Pi 4 aarch64, 8 GB.
 
+## Version 0.20.0
+
+- Husmodellen valideras med daglig omträning på högst 14 tidigare dygn och tränas därefter separat på färska data för drift. Lärande visar träningsperiod, senaste valideringsutfall och luckor med gamla solcellsnollor. Validering äldre än 48 timmar spärrar styrning; felgränserna är oförändrade.
+
 ## Version 0.19.3
 
 - Modellhistorik exporteras i bakgrunden med korta statusanrop, så ZIP-bygget inte håller den externa anslutningen öppen. CSV skrivs direkt till ZIP för lägre minnesbehov. HTML-felsvar visas som begripliga HTTP-fel.

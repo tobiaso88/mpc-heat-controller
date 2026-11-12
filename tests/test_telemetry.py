@@ -115,6 +115,9 @@ class TelemetryTests(unittest.TestCase):
             return next(r['quality'] for r in readings(c, states) if r['entity'] == 'sensor.pv')
         with patch('app.telemetry.now', return_value=t):
             self.assertEqual(quality([pv, sun]), 'OK')
+            saved = next(r for r in readings(c, [pv, sun]) if r['entity'] == 'sensor.pv')
+            self.assertEqual(saved['zero_basis'], 'fresh_darkness')
+            self.assertEqual(saved['sun']['state'], 'below_horizon')
             self.assertNotEqual(quality([pv]), 'OK')
             self.assertNotEqual(quality([pv, dict(sun, state='above_horizon')]), 'OK')
             self.assertNotEqual(quality([pv, dict(sun, last_updated=(t-timedelta(hours=1)).isoformat())]), 'OK')

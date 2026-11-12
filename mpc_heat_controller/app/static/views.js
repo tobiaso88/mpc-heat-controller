@@ -410,7 +410,21 @@ function renderLearning() {
   $('model-reasons-title').hidden = !strict;
   $('model-reasons-title').textContent = 'Kvar till det strikta kravet för skuggförslag (0,35 °C). Det behövs inte för inlärningen – modellen tränas om varje dygn och kan klara det med tiden:';
   $('model-reasons').replaceChildren(...[...reasons, ...(learningReady ? [] : m.plan_blockers || [])].map(text => h('li', {text})));
-  renderAccuracy($('accuracy'), m.report?.metrics || [], m.report?.selected_model, 'Visas när modellen har tränats – det kräver minst 250 kompletta timmar i skuggläge.');
+  const displayed = (learningReady && m.evaluations?.[learning.source]) || m.report;
+  renderAccuracy($('accuracy'), displayed?.metrics || [], learningReady ? learning.model : displayed?.selected_model, 'Visas när modellen har tränats – det kräver minst 250 kompletta timmar i skuggläge.');
+  const reports = Object.entries(m.evaluations || {}).filter(([, report]) => report);
+  if (!reports.length && m.report) reports.push(['temperature', m.report]);
+  $('model-periods').replaceChildren(...reports.map(([source, report]) => {
+    if (!report.training_end) return h('p', {class: 'sub', text: `${labels[source] || source}: äldre modellformat. Perioderna visas efter nästa omträning.`});
+    const stale = Date.now() - Date.parse(report.validation_end) > 48 * HOUR;
+    return h('p', {class: 'sub'}, h('strong', {text: labels[source] || source}),
+      ` · Driftmodell tränad på ${fullTime(report.training_start)}–${fullTime(report.training_end)} (${report.training_pairs} timpar). `,
+      `Rullande validering: starter från ${fullTime(report.validation_start)}, senaste utfall ${fullTime(report.validation_end)}. ${report.common_windows} överlappande testfönster.`,
+      stale ? ' Valideringen är äldre än 48 timmar; modellen får inte styra.' : '');
+  }));
+  const gaps = m.pv_diagnostics?.pv_stale_zero_hours || [];
+  if (gaps.length) $('model-periods').append(h('p', {class: 'sub', text:
+    `Solcellsunderlaget har luckor med gamla nollvärden. Senast: ${gaps.map(fullTime).join(', ')}. Dagtid krävs en färsk rapport från växelriktaren. Gamla dagtidsvärden räknas inte som säker nollproduktion.`}));
 }
 
 function renderAccuracy(host, metrics, selected, empty) {
@@ -497,7 +511,7 @@ function prepareModel(report) {
 }
 function renderModel(result) {
   renderAccuracy($('model-accuracy'), result.metrics, null, '');
-  $('model-status').textContent = `${result.complete_hours} kompletta timmar. Validering från ${fullTime(result.split_at)}. ${result.incomplete_hours} ofullständiga timmar uteslöts. ${result.comparison || ''} ${result.message} ${result.aggregation}`;
+  $('model-status').textContent = `${result.complete_hours} kompletta timmar. Driftmodell tränad ${fullTime(result.training_start)}–${fullTime(result.training_end)}. Valideringens senaste utfall ${fullTime(result.validation_end)}. ${result.incomplete_hours} ofullständiga timmar uteslöts. ${result.comparison || ''} ${result.message} ${result.aggregation}`;
 }
 async function inspectFile() {
   const file = $('file').files[0], status = $('history-status');

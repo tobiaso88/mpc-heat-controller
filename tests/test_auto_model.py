@@ -16,7 +16,7 @@ class AutoModelTests(unittest.TestCase):
     def make_log(self, data, hours=250):
         config = validate({'mode': 'shadow', 'indoor': ['sensor.room'],
                            'outdoor': 'sensor.out', 'applied_signal': 'number.signal'})
-        start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        start = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)-timedelta(hours=hours-1)
         temperature = 21.0
         with sqlite3.connect(data / 'measurements.sqlite') as db:
             db.execute('CREATE TABLE samples (time TEXT PRIMARY KEY, readings TEXT, settings TEXT)')
@@ -446,3 +446,26 @@ class AutoModelTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class ValidationFreshnessTests(unittest.TestCase):
+    def test_old_validation_blocks_both_quality_profiles_and_live_plan(self):
+        from app.auto_model import validation_reasons, learning_quality
+        now = datetime.now(timezone.utc)
+        report = {'validation_method': 'daily_rolling_14d',
+                  'training_end': (now-timedelta(hours=1)).isoformat(),
+                  'data_end': now.isoformat(),
+                  'validation_end': (now-timedelta(days=4)).isoformat()}
+        self.assertTrue(validation_reasons(report))
+        self.assertTrue(any('Valideringen' in r for r in learning_quality(report, 'linear')))
+        blockers = []
+        self.assertEqual(live_plan(report, 18, 5, [], validate({}), blockers=blockers), [])
+        self.assertTrue(any('Valideringen' in r for r in blockers))
+
+    def test_old_saved_report_cannot_plan_even_if_its_own_data_was_fresh(self):
+        from app.auto_model import validation_reasons
+        old = datetime.now(timezone.utc)-timedelta(days=4)
+        report = {'validation_method': 'daily_rolling_14d',
+                  'training_end': old.isoformat(), 'data_end': old.isoformat(),
+                  'validation_end': old.isoformat()}
+        self.assertEqual(validation_reasons(report), [])
+        self.assertTrue(validation_reasons(report, datetime.now(timezone.utc)))
