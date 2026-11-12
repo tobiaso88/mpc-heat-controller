@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+import logging
 import math
 import os
 import sqlite3
@@ -130,6 +131,12 @@ def apply_config(c):
         COLLECTOR.control.stop('Inställningar sparade. PI måste aktiveras igen för verklig styrning.')
 
 class Handler(BaseHTTPRequestHandler):
+    def log_request(self, code='-', size='-'):
+        # Polling the UI should not push useful diagnostics out of the app log.
+        if self.command == 'GET' and str(code).isdigit() and 200 <= int(code) < 400:
+            return
+        super().log_request(code, size)
+
     def reply(self, code, data, kind="application/json", filename=None):
         body = json.dumps(data, ensure_ascii=False).encode() if kind == "application/json" else data
         self.send_response(code)
@@ -166,7 +173,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200,read_shadow_evaluation(DATA.resolve(),
                     limit=int(params.get('limit',['24'])[0]), before=params.get('before',[None])[0]))
             if path == "/api/model/export":
-                return self.reply(200, export_history(DATA, config()), "application/zip", "mpc-model-history.zip")
+                try:
+                    content = export_history(DATA, config())
+                except Exception:
+                    logging.exception("Model history export failed")
+                    return self.reply(503, {"error": "Exporten misslyckades. Öppna appens Logg i Home Assistant och leta efter 'Model history export failed'."})
+                return self.reply(200, content, "application/zip", "mpc-model-history.zip")
             if path == "/api/model/saved": return self.reply(200, model_store.load(DATA))
             if path == "/api/model/automatic": return self.reply(200, model_store.load_auto(DATA))
             if path == "/api/telemetry": return self.reply(200, COLLECTOR.get() if COLLECTOR else {})

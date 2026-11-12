@@ -6,12 +6,28 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 from app.core import validate
 from app.history_export import build
 
 
 class HistoryExportTests(unittest.TestCase):
+    def test_export_failure_logs_traceback_and_returns_actionable_error(self):
+        from app.server import Handler
+        handler = object.__new__(Handler)
+        handler.path = '/api/model/export'
+        handler.reply = Mock()
+        with patch('app.server.config', return_value=validate({})), \
+                patch('app.server.export_history', side_effect=sqlite3.OperationalError('database is locked')), \
+                self.assertLogs(level='ERROR') as logs:
+            handler.do_GET()
+        self.assertIn('Model history export failed', logs.output[0])
+        self.assertIn('database is locked', logs.output[0])
+        status, body = handler.reply.call_args.args
+        self.assertEqual(status, 503)
+        self.assertIn('Logg', body['error'])
+
     def test_exports_raw_history_and_only_eligible_hourly_values(self):
         config = validate({'indoor': ['sensor.room'], 'outdoor': 'sensor.out',
                            'applied_signal': 'number.signal'})

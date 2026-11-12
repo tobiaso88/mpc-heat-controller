@@ -1,3 +1,9 @@
+# 0.19.2
+
+- Lyckade GET-anrop (HTTP 2xx/3xx) loggas inte längre, så återkommande avläsningar inte tränger undan felsökningsinformation. Misslyckade anrop och övriga fel loggas fortfarande.
+- Misslyckad export av modellhistorik loggar fullständig felrapport under `Model history export failed`. Gränssnittet visar HTTP-status och serverns felmeddelande. Detta förbättrar felsökningen; grundorsaken till det rapporterade exportfelet är ännu inte fastställd.
+- Reglering och modellkrav är oförändrade.
+
 # 0.19.1
 
 - Lärande visar status för MPC-inlärning när den är påslagen: vilken modell som är godkänd för inlärning, kravet för inlärning och om MPC styr. Steget *Skuggförslag* heter då *MPC-inlärning*.

@@ -458,7 +458,11 @@ async function exportHistory() {
   button.disabled = true; status.textContent = 'Förbereder export…';
   try {
     const response = await fetch('api/model/export');
-    if (!response.ok) throw Error('Kunde inte exportera modellhistoriken. Försök igen.');
+    if (!response.ok) {
+      let detail = '';
+      try { detail = (await response.json()).error || ''; } catch (_) { /* Ingress may return HTML. */ }
+      throw Error(`Kunde inte exportera modellhistoriken (HTTP ${response.status}). ${detail || 'Se appens Logg i Home Assistant för mer information.'}`);
+    }
     const url = URL.createObjectURL(await response.blob()), link = h('a', {href: url, download: 'mpc-model-history.zip'});
     document.body.append(link); link.click(); link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 60000);
