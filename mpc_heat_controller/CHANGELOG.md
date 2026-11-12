@@ -1,3 +1,11 @@
+# 0.19.3
+
+- Modellhistorik byggs som ett bakgrundsjobb i en temporär ZIP-fil. Gränssnittet startar jobbet, följer status med korta anrop och hämtar filen först när den är klar. Detta undviker att extern åtkomst måste vänta på hela ZIP-bygget i samma anrop. Endast ett exportjobb körs åt gången; tillfällig fil ersätts vid nästa export.
+- Exporten arbetar mot SQLite-säkerhetskopior så komprimeringen inte håller en lästransaktion öppen mot den aktiva mätloggen.
+- Råhistorikens CSV skrivs direkt till ZIP i stället för att hållas som en stor separat sträng i minnet.
+- API-anrop hanterar HTML-felsidor och visar ett begripligt HTTP-fel, inklusive timeout 524.
+- Reglering och modellkrav är oförändrade.
+
 # 0.19.2
 
 - Lyckade GET-anrop (HTTP 2xx/3xx) loggas inte längre, så återkommande avläsningar inte tränger undan felsökningsinformation. Misslyckade anrop och övriga fel loggas fortfarande.

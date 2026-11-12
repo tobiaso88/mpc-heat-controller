@@ -2,6 +2,10 @@
 
 Home Assistant-app för komfortvärme med eget webbgränssnitt, PI och experimentell modellutvärdering. Mål: HA OS 2026.9.1, Raspberry Pi 4 aarch64, 8 GB.
 
+## Version 0.19.3
+
+- Modellhistorik exporteras i bakgrunden med korta statusanrop, så ZIP-bygget inte håller den externa anslutningen öppen. CSV skrivs direkt till ZIP för lägre minnesbehov. HTML-felsvar visas som begripliga HTTP-fel.
+
 ## Version 0.19.2
 
 - Lyckade GET-anrop fyller inte längre appens logg. Exportfel visar HTTP-status i gränssnittet och loggar den fullständiga felorsaken för felsökning.

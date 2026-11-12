@@ -1,7 +1,6 @@
 import csv
 import io
 import json
-import logging
 import math
 import os
 import sqlite3
@@ -17,7 +16,7 @@ from .core import DEFAULT, validate, simulate
 from .telemetry import Collector, readings, request as ha_request
 from .model import evaluate
 from . import model_store
-from .history_export import build as export_history
+from .history_export import ExportJob
 from .trends import read as read_trends
 from .shadow_evaluation import read as read_shadow_evaluation
 from .pv_forecast import energy_data, sources as pv_sources
@@ -27,6 +26,7 @@ DATA = Path(os.environ.get("MPC_DATA", "./data"))
 STATIC = Path(__file__).parent / "static"
 LOCK = threading.RLock()
 COLLECTOR = None
+EXPORT = ExportJob()
 
 def config():
     with LOCK:
@@ -172,13 +172,25 @@ class Handler(BaseHTTPRequestHandler):
                 params=parse_qs(urlsplit(self.path).query)
                 return self.reply(200,read_shadow_evaluation(DATA.resolve(),
                     limit=int(params.get('limit',['24'])[0]), before=params.get('before',[None])[0]))
-            if path == "/api/model/export":
-                try:
-                    content = export_history(DATA, config())
-                except Exception:
-                    logging.exception("Model history export failed")
-                    return self.reply(503, {"error": "Exporten misslyckades. Öppna appens Logg i Home Assistant och leta efter 'Model history export failed'."})
-                return self.reply(200, content, "application/zip", "mpc-model-history.zip")
+            if path in ('/api/model/export', '/api/model/export/status'):
+                job_id = parse_qs(urlsplit(self.path).query).get('id', [''])[0]
+                if path.endswith('/status'):
+                    result = EXPORT.status(job_id)
+                    return self.reply(200 if result else 404, result or {'error': 'Exporten finns inte längre. Starta en ny export.'})
+                source = EXPORT.open(job_id)
+                if source is None:
+                    return self.reply(404, {'error': 'Exporten är inte klar eller finns inte längre. Starta en ny export.'})
+                with source:
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/zip')
+                    self.send_header('Content-Length', str(os.fstat(source.fileno()).st_size))
+                    self.send_header('Content-Disposition', 'attachment; filename="mpc-model-history.zip"')
+                    self.send_header('Cache-Control', 'no-store')
+                    self.send_header('X-Content-Type-Options', 'nosniff')
+                    self.end_headers()
+                    while chunk := source.read(256 * 1024):
+                        self.wfile.write(chunk)
+                return
             if path == "/api/model/saved": return self.reply(200, model_store.load(DATA))
             if path == "/api/model/automatic": return self.reply(200, model_store.load_auto(DATA))
             if path == "/api/telemetry": return self.reply(200, COLLECTOR.get() if COLLECTOR else {})
@@ -200,6 +212,8 @@ class Handler(BaseHTTPRequestHandler):
             size = int(self.headers.get("Content-Length", 0))
             if not 0 < size <= 20_000_000: return self.reply(413, {"error": "Filgräns 20 MB"})
             body = self.rfile.read(size)
+            if self.path == '/api/model/export':
+                return self.reply(202, EXPORT.start(DATA, config()))
             if self.path == '/api/control/stop':
                 if COLLECTOR:COLLECTOR.control.stop()
                 return self.reply(200, {'active':False})

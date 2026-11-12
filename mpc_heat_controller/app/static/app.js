@@ -12,7 +12,11 @@ const state = {
 async function api(path, body, raw = false) {
   const response = await fetch(`api/${path}`, body === undefined ? {} : {method: 'POST',
     headers: {'X-MPC-Request': '1', 'Content-Type': raw ? 'text/csv' : 'application/json'}, body: raw ? body : JSON.stringify(body)});
-  const value = await response.json();
+  let value;
+  try { value = await response.json(); }
+  catch (_) {
+    throw Error(`HTTP ${response.status}: ${response.status === 524 ? 'Anropet tog för lång tid via den externa anslutningen.' : 'Servern svarade inte med giltig data. Försök igen eller kontrollera appens Logg.'}`);
+  }
   if (!response.ok) throw Error(value.error || 'Kunde inte läsa data');
   return value;
 }

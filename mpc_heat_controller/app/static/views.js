@@ -457,7 +457,14 @@ async function exportHistory() {
   const button = $('export-model-history'), status = $('export-status');
   button.disabled = true; status.textContent = 'Förbereder export…';
   try {
-    const response = await fetch('api/model/export');
+    let job = await api('model/export', {});
+    while (job.state === 'running') {
+      status.textContent = 'Förbereder export i bakgrunden… Du kan fortsätta använda appen.';
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      job = await api(`model/export/status?id=${encodeURIComponent(job.id)}`);
+    }
+    if (job.state !== 'ready') throw Error(job.error || 'Exporten misslyckades. Se appens Logg.');
+    const response = await fetch(`api/model/export?id=${encodeURIComponent(job.id)}`);
     if (!response.ok) {
       let detail = '';
       try { detail = (await response.json()).error || ''; } catch (_) { /* Ingress may return HTML. */ }
