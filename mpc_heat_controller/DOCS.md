@@ -12,7 +12,7 @@ Appen börjar alltid utan skrivning. Om automatisk återstart är vald och PI ti
 4. Stäng av gamla MQTT-automationen och alla andra skrivare. Välj automationen i guiden. Appen kontrollerar att den är avstängd inför varje skrivning; andra skrivare kan inte säkert upptäckas.
 5. Spara. På Hem väljer du Starta aktiv styrning och bekräftar verklig skrivning; bekräftelsen är spärrad tills förberedelserna i Inställningar → Aktiv styrning är uppfyllda. Att installera eller spara aktiverar aldrig PI.
 
-Aktiv PI kontrollerar varje minut och skriver via number.set_value tidigast 300 sekunder efter föregående sändning, även när temperaturen är oförändrad. Nätverks- och beräkningstid kan förlänga intervallet. Efter ett ändrat kommando får HA-entitetens tillstånd upp till 120 sekunder på sig att återspegla det nya värdet; ett annat värde stoppar fortfarande PI direkt. Utgången avrundas till närmaste 0,5 °C och följer appens absoluta gränser och ändringshastighet. Entiteten måste stödja halva grader. Vid ett startvärde utanför dessa steg kan första sändningen vänta tills hastighetsgränsen tillåter avrundningen. Små ändringar ackumuleras tills ett helt steg ryms inom ändringsgränsen. HA:s lyckade servicesvar och entitetstillstånd är inte kvittens från pumpen.
+Aktiv PI kontrollerar varje minut och skriver via number.set_value tidigast 300 sekunder efter föregående sändning, även när temperaturen är oförändrad. Nätverks- och beräkningstid kan förlänga intervallet. Efter ett ändrat kommando får HA-entitetens tillstånd upp till 120 sekunder på sig att återspegla det nya värdet; ett annat värde stoppar fortfarande PI direkt. Utgången avrundas till närmaste 0,5 °C och följer appens absoluta gränser och ändringshastighet. Entiteten måste stödja halva grader. Vid ett startvärde utanför dessa steg kan första sändningen vänta tills hastighetsgränsen tillåter avrundningen. Små ändringar ackumuleras tills ett helt steg ryms inom ändringsgränsen. Större ändringar tas i halvgradssteg i takt med *Maximal signaländring* (förval 2 °C/h, alltså 0,5 °C per kvart) i stället för att hållas tillbaka och sedan skickas i ett hopp. En lång period med oförändrat värde ger inte utrymme för mer än ett steg åt gången; vid högre ändringstakt motsvarar utrymmet ett sändningsintervall på fem minuter. HA:s lyckade servicesvar och entitetstillstånd är inte kvittens från pumpen.
 
 ## Stopp, fel och omstart
 
@@ -24,7 +24,7 @@ Vid ogiltiga eller äldre än 24 timmar rapporterade reglergivare, HA-fel, loggn
 
 Fel = börvärde minus rumsgivarnas medeltemperatur. P = Kp × fel. I ökar med Ki × fel × timmar. Utgång = verklig utetemperatur minus P och I. Positivt värmebehov ger lägre simulerad utetemperatur. Kompensationsgräns, absoluta signalgränser och ändringshastighet tillämpas. Absoluta gränser prioriteras om verklig utetemperatur ligger utanför dem. Integrering fryses när den skulle förstärka en begränsning; I begränsas även separat.
 
-I nollställs vid datafel, omstart, relevanta inställningsändringar, demo eller beräkningsuppehåll över 15 minuter. Vid aktivering startar PI från giltigt avläst Ohmigo-värde inom gränserna och ändrar därefter gradvis. Regulatorn är inte en hårdvarusäkerhetsfunktion och behöver verifieras på installationen innan obevakad drift.
+I-delen beskriver husets bestående avvikelse från värmekurvan och behålls därför när börvärdet eller komfortområdet ändras. Under aktiv styrning sparas den varje minut i `/data/control.sqlite`. Vid start, automatisk återstart och efter en paus återanvänds det sparade värdet om det är högst 24 timmar gammalt och PI-inställningar, givarval, utgång och signalgränser är oförändrade; annars börjar I från noll. I nollställs fortfarande vid ändrade PI-inställningar, demo och beräkningsuppehåll över 15 minuter. I skuggläge utan aktiv styrning sparas inget värde. Vid aktivering startar PI från giltigt avläst Ohmigo-värde inom gränserna och ändrar därefter gradvis. Regulatorn är inte en hårdvarusäkerhetsfunktion och behöver verifieras på installationen innan obevakad drift.
 
 ## Loggning och modeller
 
@@ -48,7 +48,7 @@ Efter omstart eller tillfälligt avbrott krävs tillgängliga och giltiga värde
 
 Tillfälliga givar-, kommunikations- och loggningsfel pausar och kan återupptas. Oväntad utgångsändring och konfigurationskonflikt vid skrivning kräver manuell aktivering. Manuellt stopp och tekniska inställningsändringar raderar återstartsönskemålet, även över omstart; rena komfort- och termostatval gör det inte. Stoppa därför appen via PI-stoppknappen om du vill att den ska förbli avstängd efter en senare appstart.
 
-Regulatorn återställs och startar mjukt från tillgängligt Ohmigo-värde vid återstart. Inga gamla beräknade kommandon spelas upp.
+Regulatorn startar mjukt från tillgängligt Ohmigo-värde vid återstart och återanvänder en sparad I-del enligt avsnittet PI-beräkning. Inga gamla beräknade kommandon spelas upp.
 
 ## Egna HA-entiteter i 0.8.0
 
@@ -60,7 +60,7 @@ Sjutton sensorer skapas: PI-status, termostatsynkning, Grundläge, Börvärde, M
 
 Under Inställningar → Komfort kan du välja noll eller flera `climate`-entiteter som ska följa appens börvärde. Inget väljs automatiskt. I skuggläge kontrollerar appen deras `temperature`-börvärde varje minut och använder `climate.set_temperature` när ett valt värde avviker. Synkningen fortsätter även om PI-styrningen är stoppad, eftersom valet är en separat uttrycklig behörighet. Demoläge skriver aldrig till termostater.
 
-Synkningen är enkelriktad: appens börvärde är master. En manuell ändring på en vald termostat skrivs därför tillbaka till appens värde vid nästa kontroll. Ändringar av börvärde, komfortintervall och valda följartermostater kan sparas utan att aktiv PI stoppas; I-delen nollställs när komfortmålet ändras. Andra tekniska inställningsändringar kräver fortfarande ny aktivering. Värmepumpens egen climate-entitet bör lämnas omarkerad om den ska fortsätta reglera självständigt. En otillgänglig termostat eller misslyckad skrivning visas som warning men stoppar inte PI:s separata Ohmigo-styrning.
+Synkningen är enkelriktad: appens börvärde är master. En manuell ändring på en vald termostat skrivs därför tillbaka till appens värde vid nästa kontroll. Ändringar av börvärde, komfortintervall och valda följartermostater kan sparas utan att aktiv PI stoppas; I-delen behålls när komfortmålet ändras. Andra tekniska inställningsändringar kräver fortfarande ny aktivering. Värmepumpens egen climate-entitet bör lämnas omarkerad om den ska fortsätta reglera självständigt. En otillgänglig termostat eller misslyckad skrivning visas som warning men stoppar inte PI:s separata Ohmigo-styrning.
 
 Publiceringen kör i egen tråd ungefär varje minut. Discovery-konfiguration behålls på brokern och återannonseras var femte minut. Tillstånd behålls inte på brokern. Utan nya MQTT-publiceringar blir sensorerna otillgängliga efter 180 sekunder. Beräkningsunderlag äldre än 420 sekunder, eller från en annan konfiguration, publiceras som otillgängligt. I skuggläge uppdateras mätdata fortfarande var femte minut.
 
@@ -100,11 +100,11 @@ Under Inställningar → Avancerat → *MPC-inlärning* kan MPC få styra värme
 
 Varje minut räknar både PI och MPC. MPC:s signal för nästa timme skickas, men aldrig mer än *Största avvikelse från PI* (förval 2 °C) från PI:s signal. PI styr ensam när:
 
-- innetemperaturen är under komfortområdet,
+- innetemperaturen är under komfortområdet, och därefter tills den är 0,2 °C över nedre gränsen igen (dock aldrig över börvärdet),
 - ingen modell är godkänd för inlärning eller ingen plan ryms inom signalgränser och ändringstakt,
 - planen är äldre än 15 minuter.
 
-När det är varmare än komfortområdet får MPC bara ge mindre värme (högre signal) än PI. Watchdog, signalgränser, *Maximal signaländring*, kvittens från Home Assistant och stopp vid fel gäller oförändrat.
+När det är varmare än komfortområdet får MPC bara ge mindre värme (högre signal) än PI. Begränsningen gäller tills temperaturen är 0,2 °C under övre gränsen igen. Marginalen hindrar att PI och MPC byter plats varje minut när temperaturen ligger vid en komfortgräns; bytet i sig följer *Maximal signaländring* i halvgradssteg. Watchdog, signalgränser, *Maximal signaländring*, kvittens från Home Assistant och stopp vid fel gäller oförändrat.
 
 Godkännandet för inlärning är lösare än för skuggförslag men behåller säkerhetskontrollerna: rätt signalriktning och rimlig storlek, minst 24 valideringsfönster, MAE högst 0,8 °C vid 1, 6, 12 och 24 h och bättre än persistens för nästa timme. Den godkända modell med lägst fel används. Solcellsmodellen används när prognosen täcker hela dygnet, annars temperaturmodellen.
 

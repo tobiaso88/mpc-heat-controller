@@ -51,6 +51,45 @@ class ControlTests(unittest.TestCase):
         x.send(c,s,{'signal':4.5},clock=t+900)
         self.assertEqual(r.call_args.args[1]['value'],4.5)
 
+    def test_large_change_is_stepped_at_the_rate_limit(self):
+        c,s,i,r,x=self.setup_control();x.arm(c,s,i);t=x.changed_at
+        sent=[]
+        def send(signal,clock):
+            x.send(c,s,{'signal':signal},clock=clock)
+            sent.append(r.call_args.args[1]['value']);s[0]['state']=str(sent[-1])
+        send(5,t+300)
+        # Three steady hours must not license a jump: 2 °C/h is one half degree per quarter.
+        for minutes in range(0,65,5):send(3,t+3*3600+minutes*60)
+        self.assertEqual(sent[1:],[4.5,4.5,4.5,4.0,4.0,4.0,3.5,3.5,3.5,3.0,3.0,3.0,3.0])
+        self.assertTrue(x.get()['active'])
+
+    def test_change_never_waits_and_then_jumps(self):
+        c,s,i,r,x=self.setup_control();x.arm(c,s,i);t=x.changed_at
+        values=[]
+        for minutes in range(5,130,5):
+            x.send(c,s,{'signal':1},clock=t+minutes*60)
+            values.append(r.call_args.args[1]['value']);s[0]['state']=str(values[-1])
+        self.assertLessEqual(max(abs(b-a) for a,b in zip([5]+values,values)),0.5)
+        self.assertEqual(values[-1],1)
+
+    def test_fast_rate_moves_one_dispatch_worth(self):
+        c,s,i,r,x=self.setup_control();c['pi_rate']=12;x.arm(c,s,i);t=x.changed_at
+        x.send(c,s,{'signal':1},clock=t+3600)
+        self.assertEqual(r.call_args.args[1]['value'],4)  # 12 °C/h is 1 °C per five minutes
+        s[0]['state']='4'
+        x.send(c,s,{'signal':1},clock=t+3900)
+        self.assertEqual(r.call_args.args[1]['value'],3)
+
+    def test_toward_stays_between_last_and_target(self):
+        self.assertEqual(Control.toward(5,3,0.5),4.5)
+        self.assertEqual(Control.toward(5,7,1.2),6)
+        self.assertEqual(Control.toward(5,5,0),5)
+        self.assertEqual(Control.toward(5,4.5,0.1),5)
+        # An off-grid start may only move towards the target, never to the half degree behind it.
+        self.assertIsNone(Control.toward(5.3,5,0.25))
+        self.assertEqual(Control.toward(5.3,5,0.3),5)
+        self.assertEqual(Control.toward(5.3,7,0.2),5.5)
+
     def test_comfort_reconfiguration_keeps_active_control(self):
         c,s,i,r,x=self.setup_control();x.arm(c,s,i)
         updated=dict(c,target=21.7,comfort_max=22.5,target_climates=['climate.living'])
@@ -75,6 +114,48 @@ class ControlTests(unittest.TestCase):
             self.assertTrue(collector.get()['control']['active'])
             self.assertEqual(req.call_args.args[0],'services/number/set_value')
             self.assertEqual(req.call_args.args[1]['value'],5)
+
+    def test_i_term_survives_restart_and_target_change(self):
+        import sqlite3,tempfile
+        from pathlib import Path
+        from datetime import datetime,timezone,timedelta
+        from unittest.mock import patch
+        from app import server
+        from app.telemetry import Collector,readings
+        c,s,i,r,x=self.setup_control()
+        for entity,value in [('sensor.in',21),('sensor.out',5)]:
+            s.append({'entity_id':entity,'state':str(value),'last_reported':datetime.now(timezone.utc).isoformat(),'attributes':{'unit_of_measurement':'°C'}})
+        with tempfile.TemporaryDirectory() as d,patch('app.telemetry.request',return_value=s):
+            data=Path(d)
+            idle=Collector(lambda:c,data);idle.restore_pi(c)
+            self.assertEqual(idle.pi.integral,0)
+            self.assertFalse((data/'control.sqlite').exists())  # reading must not create an empty database
+            collector=Collector(lambda:c,data)
+            collector.control.arm(c,s,readings(c,s))
+            collector.cycle()
+            collector.pi.integral=-1.75
+            collector.cycle()
+            self.assertTrue(collector.get()['control']['active'])
+            saved=collector.pi.integral
+            self.assertLess(saved,-1.7)
+            # A comfort change keeps both the active control and the I term.
+            warmer=dict(c,target=22,comfort_max=22.5)
+            with patch.object(server,'COLLECTOR',collector),patch.object(server,'DATA',data):
+                server.save(c);server.apply_config(warmer)
+            self.assertEqual(collector.pi.integral,saved)
+            self.assertTrue(collector.get()['control']['active'])
+            # After a restart the saved value is used, also with the new target.
+            reboot=Collector(lambda:warmer,data);reboot.restore_pi(warmer)
+            self.assertEqual(reboot.pi.integral,saved)
+            # Other PI settings or an old value start from zero.
+            reboot.restore_pi(dict(c,pi_ki=0.2));self.assertEqual(reboot.pi.integral,0)
+            with sqlite3.connect(data/'control.sqlite') as db:
+                db.execute('UPDATE pi_state SET saved_at=?',((datetime.now(timezone.utc)-timedelta(hours=25)).isoformat(),))
+            reboot.restore_pi(c);self.assertEqual(reboot.pi.integral,0)
+            # A stopped controller no longer updates the saved value.
+            collector.control.stop();collector.pi.integral=4;collector.cycle()
+            with sqlite3.connect(data/'control.sqlite') as db:
+                self.assertLess(db.execute('SELECT integral FROM pi_state').fetchone()[0],0)
 
     def test_half_degree_rounding_and_changed_value_waits_five_minutes(self):
         c,s,i,r,x=self.setup_control();s[0]['attributes']['step']=0.1

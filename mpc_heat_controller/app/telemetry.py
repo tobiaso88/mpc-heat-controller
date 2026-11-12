@@ -5,6 +5,7 @@ import os
 import sqlite3
 import threading
 import urllib.request
+from contextlib import closing
 from .pi import PI
 from .pv_history import MAX_ZERO_AGE
 from .control import Control
@@ -12,6 +13,9 @@ from .entities import EntityPublisher
 from .auto_model import AutoModel
 from .pv_forecast import energy_data, sources as pv_sources, hourly as pv_hourly, combine as combine_pv
 from datetime import datetime, timezone, timedelta
+
+# A saved I term older than this says too little about the house's present offset.
+PI_STATE_MAX_AGE = 86400
 
 def now():
     return datetime.now(timezone.utc)
@@ -187,7 +191,7 @@ class Collector:
             if cloud:
                 items.append(cloud)
             target_sync=sync_target_climates(c,states)
-            if self.control.resume(c,states,items):self.pi.reset()
+            if self.control.resume(c,states,items):self.restore_pi(c)
             if self.control.get()['active']:
                 # A number state can remain unchanged for days; freshly read state is the initial setpoint, not a temperature sensor.
                 self.control.target(c,states)
@@ -268,6 +272,7 @@ class Collector:
                 snapshot['pi']['message']=('Aktiv styrning med MPC-inlärning; PI är räcke och reserv.' if c.get('mpc_learning') else
                                            'Aktiv PI. Temperaturkommandon skickas till vald utgång; se styrstatus.')
                 if c['mode']=='shadow':self.store_control(stamp,control.get('source'),decision)
+                self.save_pi(c)
         except Exception:
             self.control.pause('PI pausad vid databortfall eller loggningsfel. Watchdog ska återgå till riktig utegivare.')
             self.pi.reset()
@@ -287,6 +292,27 @@ class Collector:
             db.execute('CREATE TABLE IF NOT EXISTS pi_samples (time TEXT PRIMARY KEY, result TEXT NOT NULL)')
             db.execute('INSERT OR REPLACE INTO pi_samples VALUES (?, ?)', (stamp, json.dumps(pi)))
             db.execute('DELETE FROM pi_samples WHERE time < ?', ((now()-timedelta(days=90)).isoformat(),))
+
+    def save_pi(self,c):
+        """Remember the I term of active control, so a restart, pause or re-activation need not relearn it."""
+        with closing(sqlite3.connect(self.data/'control.sqlite')) as db, db:
+            db.execute('CREATE TABLE IF NOT EXISTS pi_state (id INTEGER PRIMARY KEY CHECK(id=1), integral REAL NOT NULL, tuning TEXT NOT NULL, saved_at TEXT NOT NULL)')
+            db.execute('INSERT OR REPLACE INTO pi_state VALUES (1,?,?,?)',(self.pi.integral,json.dumps(PI.tuning(c)),now().isoformat()))
+
+    def restore_pi(self,c):
+        """Restart PI from the saved I term when it is recent and the PI settings are unchanged; otherwise from zero."""
+        integral=0.0
+        try:
+            # Opening a missing file would create an empty database that Control cannot read at startup.
+            if (self.data/'control.sqlite').exists():
+                with closing(sqlite3.connect(self.data/'control.sqlite')) as db:
+                    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='pi_state'").fetchone():
+                        row=db.execute('SELECT integral,tuning,saved_at FROM pi_state WHERE id=1').fetchone()
+                        if row and row[1]==json.dumps(PI.tuning(c)) and math.isfinite(row[0]) and -60<=(now()-datetime.fromisoformat(row[2])).total_seconds()<=PI_STATE_MAX_AGE:
+                            integral=row[0]
+        except (sqlite3.Error,ValueError,TypeError):
+            pass
+        self.pi.reset(integral)
 
     def store_control(self,stamp,source,decision):
         """Which regulator produced the value last sent, and this cycle's choice, for the history chart."""

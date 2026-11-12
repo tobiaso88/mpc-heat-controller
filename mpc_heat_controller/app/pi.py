@@ -9,24 +9,35 @@ class PI:
     def __init__(self):
         self.reset()
 
-    def reset(self):
-        self.integral = 0.0
+    def reset(self, integral=0.0):
+        """Start over. `integral` carries the I term from earlier active control into the restart."""
+        self.integral = integral
         self.previous = None
         self.timestamp = None
         self.signature = None
 
+    @staticmethod
+    def tuning(c):
+        """Settings the I term depends on. The target is not one of them: I holds the house's
+        steady offset from the heat curve, which a new target does not invalidate."""
+        return (c['mode'], tuple(c['indoor']), c['outdoor'], c['applied_signal'],
+                c['pi_kp'], c['pi_ki'], c['pi_limit'], c['pi_rate'], c['signal_min'], c['signal_max'])
+
     def step(self, c, items, clock=None):
         clock = time.monotonic() if clock is None else clock
-        signature = (c['mode'], c['target'], tuple(c['indoor']), c['outdoor'], c['applied_signal'],
-                     c['pi_kp'], c['pi_ki'], c['pi_limit'], c['pi_rate'], c['signal_min'], c['signal_max'])
+        signature = self.tuning(c)
         required = set(c['indoor'] + [c['outdoor']])
         values = {r['entity']:r['value'] for r in items if r['quality']=='OK' and r['value'] is not None and math.isfinite(r['value'])}
         if c['mode'] != 'shadow' or not c['indoor'] or not required.issubset(values):
             self.reset()
             return {'signal':None,'message':'PI väntar på skuggläge och giltiga inne- och utetemperaturer.'}
-        restarting = self.signature != signature or self.timestamp is None or not 0 <= clock-self.timestamp <= 900
+        changed = self.signature is not None and self.signature != signature
+        stale = self.timestamp is not None and not 0 <= clock-self.timestamp <= 900
+        restarting = changed or stale or self.timestamp is None
         if restarting:
-            self.reset(); self.signature = signature
+            self.reset(0.0 if changed or stale else clamp(self.integral, -c['pi_limit'], c['pi_limit']))
+            self.signature = signature
+        kept = restarting and self.integral != 0
         dt = 0 if self.timestamp is None else (clock-self.timestamp)/3600
         inside = sum(values[e] for e in c['indoor'])/len(c['indoor'])
         outside = values[c['outdoor']]
@@ -52,4 +63,5 @@ class PI:
         self.previous, self.timestamp = signal, clock
         return {'signal':round(signal,3),'error':round(error,3),'p':round(p,3),'i':round(self.integral,3),
                 'compensation':round(signal-outside,3),'limited':abs(raw-signal)>1e-6,'integrator_frozen':frozen,
-                'message':'PI-skuggläge. Inget kommando skickas.' + (' Omstart: I-delen nollställd; start från Ohmigos giltiga inställning eller utegivaren.' if restarting else '')}
+                'message':'PI-skuggläge. Inget kommando skickas.' + ((' Omstart: I-delen behållen från senaste aktiva styrning;' if kept else ' Omstart: I-delen nollställd;') +
+                                                                    ' start från Ohmigos giltiga inställning eller utegivaren.' if restarting else '')}

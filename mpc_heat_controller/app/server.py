@@ -120,13 +120,12 @@ def inspect_csv(content):
     return {"entities": results, "message": "Filen är granskad, inte använd för träning. Inga luckor har fyllts."}
 
 def apply_config(c):
-    """Save settings; comfort-only changes keep active PI, everything else stops it. Caller holds cycle_lock."""
+    """Save settings; comfort-only changes keep active PI and its I term, everything else stops it. Caller holds cycle_lock."""
     previous=config()
     changed={key for key in c if c[key]!=previous[key]}
     save(c)
     if changed.issubset({'target','comfort_min','comfort_max','target_climates'}):
         COLLECTOR.control.reconfigure_comfort(c)
-        if changed-{'target_climates'}:COLLECTOR.pi.reset()
     else:
         COLLECTOR.control.stop('Inställningar sparade. PI måste aktiveras igen för verklig styrning.')
 
@@ -224,7 +223,7 @@ class Handler(BaseHTTPRequestHandler):
                 with COLLECTOR.cycle_lock:
                     c=config();states=ha_request('states')
                     COLLECTOR.control.arm(c,states,readings(c,states))
-                    COLLECTOR.pi.reset()
+                    COLLECTOR.restore_pi(c)
                     COLLECTOR.wake.set()
                 return self.reply(200,COLLECTOR.control.get())
             if self.path == "/api/config":

@@ -10,6 +10,10 @@ from .core import validate
 
 class Control:
     ACK_GRACE_SECONDS=120
+    DISPATCH_SECONDS=300
+    # Once PI has taken over at a comfort limit, the temperature must come this far back
+    # inside before MPC decides again. Without it the two swap every minute at the limit.
+    GUARD_HYSTERESIS=0.2
 
     def __init__(self, request, data=None):
         self.request=request
@@ -26,6 +30,7 @@ class Control:
         self.ready_since=None
         self.decision=None
         self.last_source=None
+        self.guard=None
         if data is not None and (data/'control.sqlite').exists():
             with sqlite3.connect(data/'control.sqlite') as db:
                 row=db.execute('SELECT settings FROM intent WHERE id=1').fetchone()
@@ -137,7 +142,7 @@ class Control:
             if not c['indoor'] or not required.issubset(valid):raise ValueError('Aktuella inne- och utetemperaturer krävs.')
             if self.armed:raise ValueError('PI är redan aktiv.')
             self.persist(dict(c) if c.get('auto_restart') else None)
-            self.settings=dict(c);self.armed=True;self.last_sent=value;self.last_source=None;self.decision=None;self.changed_at=time.monotonic();self.pending_ack=None
+            self.settings=dict(c);self.armed=True;self.last_sent=value;self.last_source=None;self.decision=None;self.guard=None;self.changed_at=time.monotonic();self.pending_ack=None
             self.info={'active':True,'message':'Aktiverad. Väntar på första temperaturkommandot.'}
 
     def reconfigure_comfort(self,c):
@@ -160,30 +165,56 @@ class Control:
         raise ValueError(f'Utgången ändrades oväntat från {self.last_sent:g} till {current:g} °C. Kontrollera andra skrivare.')
 
     @staticmethod
-    def choose(c,pi,mpc,now=None):
+    def guard_state(c,inside,previous=None):
+        """'cold' below the comfort range and 'warm' above it. Either is kept until the temperature
+        is GUARD_HYSTERESIS back inside the range, though never past the target."""
+        if inside<c['comfort_min']:return 'cold'
+        if inside>c['comfort_max']:return 'warm'
+        if previous=='cold' and inside<min(c['comfort_min']+Control.GUARD_HYSTERESIS,c['target'])-1e-9:return 'cold'
+        if previous=='warm' and inside>max(c['comfort_max']-Control.GUARD_HYSTERESIS,c['target'])+1e-9:return 'warm'
+        return None
+
+    @staticmethod
+    def choose(c,pi,mpc,now=None,guard=None):
         """Pick the signal to send. MPC learning stays within ±mpc_max_deviation of PI's proposal;
         PI alone decides when it is cold, when no usable plan exists or when the plan is stale.
-        When it is too warm, MPC may only give less heat than PI."""
+        When it is too warm, MPC may only give less heat than PI. `guard` is the previous
+        decision's guard state; the new one is returned in the decision."""
         signal=pi.get('signal')
         if not c.get('mpc_learning'):return signal,{'source':'pi','reason':'MPC-inlärning är avstängd.'}
+        inside=c['target']-pi['error']
+        guard=Control.guard_state(c,inside,guard)
+        sv=lambda value,digits=2:f'{value:.{digits}f}'.replace('.',',')
         learning=(mpc or {}).get('learning') or {}
         if learning.get('state')!='ready':
-            return signal,{'source':'pi','reason':'MPC saknar plan: '+' '.join((learning.get('reasons') or ['ingen inlärningsmodell'])[:2])}
+            return signal,{'source':'pi','guard':guard,'reason':'MPC saknar plan: '+' '.join((learning.get('reasons') or ['ingen inlärningsmodell'])[:2])}
         try:
             planned=float(learning['signal']);age=(now or datetime.now(timezone.utc))-datetime.fromisoformat(learning['planned_at'])
             if not math.isfinite(planned):raise ValueError()
-        except (KeyError,TypeError,ValueError):return signal,{'source':'pi','reason':'MPC-planen är ogiltig.'}
-        if not timedelta(0)<=age<=timedelta(minutes=15):return signal,{'source':'pi','reason':'MPC-planen är för gammal.'}
-        inside=c['target']-pi['error']
+        except (KeyError,TypeError,ValueError):return signal,{'source':'pi','guard':guard,'reason':'MPC-planen är ogiltig.'}
+        if not timedelta(0)<=age<=timedelta(minutes=15):return signal,{'source':'pi','guard':guard,'reason':'MPC-planen är för gammal.'}
         if inside<c['comfort_min']:
-            return signal,{'source':'pi','reason':f'Innetemperaturen {inside:.2f} °C är under komfortområdet; PI styr.'.replace('.',',',1)}
+            return signal,{'source':'pi','guard':guard,'reason':f'Innetemperaturen {sv(inside)} °C är under komfortområdet; PI styr.'}
+        if guard=='cold':
+            back=min(c['comfort_min']+Control.GUARD_HYSTERESIS,c['target'])
+            return signal,{'source':'pi','guard':guard,'reason':f'Innetemperaturen {sv(inside)} °C har varit under komfortområdet; PI styr tills den nått {sv(back,1)} °C.'}
         deviation=c['mpc_max_deviation']
         chosen=min(signal+deviation,max(signal-deviation,planned))
         # A higher signal means less heat. Above comfort, MPC may only reduce heat compared with PI.
-        if inside>c['comfort_max'] and chosen<signal:
-            return signal,{'source':'pi','reason':'Varmt inne och MPC ville ge mer värme än PI; PI styr.','mpc_signal':planned}
-        return chosen,{'source':'mpc','reason':'MPC styr inom ±'+f'{deviation:g}'.replace('.',',')+' °C från PI.','mpc_signal':planned,'pi_signal':signal,
+        if guard=='warm' and chosen<signal:
+            return signal,{'source':'pi','guard':guard,'reason':'Varmt inne och MPC ville ge mer värme än PI; PI styr.','mpc_signal':planned}
+        return chosen,{'source':'mpc','guard':guard,'reason':'MPC styr inom ±'+f'{deviation:g}'.replace('.',',')+' °C från PI.','mpc_signal':planned,'pi_signal':signal,
                        'limited':abs(chosen-planned)>1e-9,'model':learning.get('model')}
+
+    @staticmethod
+    def toward(last,target,allowance):
+        """The half-degree value nearest `target` that lies between `last` and `target` and at most
+        `allowance` from `last`. None while an off-grid `last` has no such value within reach."""
+        if target>=last:
+            value=math.floor(min(target,last+allowance+1e-6)*2+1e-9)/2
+            return value if value>=last-1e-9 else None
+        value=math.ceil(max(target,last-allowance-1e-6)*2-1e-9)/2
+        return value if value<=last+1e-9 else None
 
     def send(self,c,states,pi,clock=None,mpc=None):
         with self.lock:
@@ -193,26 +224,31 @@ class Control:
                 if c!=self.settings:raise ValueError('Inställningarna ändrades. Aktivera på nytt efter granskning.')
                 current,low,high,step=self.target(c,states)
                 if pi.get('signal') is None or not math.isfinite(pi['signal']):raise ValueError('PI saknar giltigt förslag.')
-                proposed,decision=self.choose(c,pi,mpc)
-                self.decision=decision
+                proposed,decision=self.choose(c,pi,mpc,guard=self.guard)
+                self.decision=decision;self.guard=decision.get('guard')
                 clock=time.monotonic() if clock is None else clock
                 self.verify_output(current,step,clock)
-                if self.last_dispatch is not None and clock-self.last_dispatch<300:return decision
+                if self.last_dispatch is not None and clock-self.last_dispatch<self.DISPATCH_SECONDS:return decision
                 lo=max(low,c['signal_min']);hi=min(high,c['signal_max'])
                 min_tick=math.ceil(lo*2-1e-9);max_tick=math.floor(hi*2+1e-9)
                 value=max(min_tick,min(max_tick,math.floor(proposed*2+0.5)))/2
-                if abs(value-self.last_sent)>c['pi_rate']*max(0,clock-self.changed_at)/3600+1e-6:
+                # The allowance grows with time since the last change, up to one half-degree step or one
+                # dispatch interval's worth. A larger change is taken in steps at pi_rate, never held back
+                # and then sent whole, and a long steady period does not license a jump.
+                rate=c['pi_rate']/3600
+                allowance=min(max(0.5,rate*self.DISPATCH_SECONDS),rate*max(0,clock-self.changed_at))
+                value=self.toward(self.last_sent,value,allowance)
+                if value is None:
                     # Initial HA value may be off the half-degree grid. Wait for enough
                     # rate allowance rather than transmitting an unrounded value.
-                    if abs(self.last_sent*2-round(self.last_sent*2))>1e-6:
-                        self.info={'active':True,'message':'Väntar på tillåten ändring till närmaste 0,5 °C. Inget skickas ännu.'}
-                        return decision
-                    value=self.last_sent
+                    self.info={'active':True,'message':'Väntar på tillåten ändring till närmaste 0,5 °C. Inget skickas ännu.'}
+                    return decision
                 # Repeat unchanged values every five minutes for the watchdog.
                 previous=self.last_sent
                 self.request('services/number/set_value',{'entity_id':c['applied_signal'],'value':value})
                 self.last_dispatch=clock
-                if value!=self.last_sent:self.changed_at=clock
+                # Allowance not used by this change counts towards the next one.
+                if value!=self.last_sent:self.changed_at=clock-max(0,allowance-abs(value-self.last_sent))/rate
                 self.last_sent=value
                 self.pending_ack={'previous':previous,'sent_at':clock} if value!=previous else None
                 self.last_command={'value':value,'sent_at':time.time()}

@@ -69,6 +69,53 @@ class ChoiceTests(unittest.TestCase):
         self.assertEqual((signal, decision['source']), (6.5, 'mpc'))
 
 
+class GuardTests(unittest.TestCase):
+    """Comfort 21–22, target 21.5. `error` is target minus the indoor temperature."""
+
+    def choose(self, inside, planned, guard=None):
+        signal, decision = Control.choose(config(), {'signal': 5.0, 'error': 21.5-inside}, learning(planned), guard=guard)
+        return signal, decision['source'], decision['guard']
+
+    def test_pi_keeps_control_until_clearly_back_inside_after_cold(self):
+        self.assertEqual(self.choose(20.9, 6.0), (5.0, 'pi', 'cold'))
+        # Back above the limit, but not yet 0.2 °C inside: PI still decides.
+        self.assertEqual(self.choose(21.1, 6.0, 'cold'), (5.0, 'pi', 'cold'))
+        self.assertEqual(self.choose(21.2, 6.0, 'cold'), (6.0, 'mpc', None))
+        # The same temperature without a preceding cold spell is MPC's.
+        self.assertEqual(self.choose(21.1, 6.0), (6.0, 'mpc', None))
+        _, decision = Control.choose(config(), {'signal': 5.0, 'error': 0.4}, learning(6.0), guard='cold')
+        self.assertIn('tills den nått 21,2 °C', decision['reason'])
+
+    def test_warm_guard_holds_until_clearly_back_inside(self):
+        self.assertEqual(self.choose(22.1, 3.0), (5.0, 'pi', 'warm'))
+        self.assertEqual(self.choose(21.9, 3.0, 'warm'), (5.0, 'pi', 'warm'))
+        self.assertEqual(self.choose(21.9, 6.5, 'warm'), (6.5, 'mpc', 'warm'))  # less heat is still allowed
+        self.assertEqual(self.choose(21.8, 3.0, 'warm'), (3.0, 'mpc', None))
+        self.assertEqual(self.choose(21.9, 3.0), (3.0, 'mpc', None))
+
+    def test_narrow_comfort_range_releases_at_the_target(self):
+        c = config(comfort_min=21.4, comfort_max=21.6)
+        self.assertEqual(Control.guard_state(c, 21.45, 'cold'), 'cold')
+        self.assertIsNone(Control.guard_state(c, 21.5, 'cold'))
+        self.assertIsNone(Control.guard_state(c, 21.5, 'warm'))
+
+    def test_guard_follows_temperature_without_a_plan_and_is_cleared_on_start(self):
+        signal, decision = Control.choose(config(), {'signal': 5.0, 'error': 0.6}, {'learning': {'state': 'blocked'}})
+        self.assertEqual((decision['source'], decision['guard']), ('pi', 'cold'))
+        self.assertNotIn('guard', Control.choose(dict(config(), mpc_learning=False), {'signal': 5.0, 'error': 0.6}, None)[1])
+
+    def test_send_remembers_the_guard_between_cycles(self):
+        c, states, request, control = SendTests.setup_control(self)
+        t = control.changed_at
+        sources = []
+        for minute, inside in enumerate((20.9, 21.05, 21.1, 21.25, 21.05), 1):
+            sources.append(control.send(c, states, {'signal': 5.0, 'error': 21.5-inside}, clock=t+minute*60, mpc=learning(5.0))['source'])
+        self.assertEqual(sources, ['pi', 'pi', 'pi', 'mpc', 'mpc'])
+        control.stop()
+        control.arm(c, states, [{'entity': e, 'value': 20, 'quality': 'OK'} for e in ['sensor.in', 'sensor.out']])
+        self.assertIsNone(control.guard)
+
+
 class SendTests(unittest.TestCase):
     def setup_control(self, **extra):
         c = config(**extra)
@@ -87,8 +134,11 @@ class SendTests(unittest.TestCase):
         # Within ±2 of PI gives 3.0, but the 2 °C/h rate allows nothing yet after one minute.
         self.assertEqual(decision['source'], 'mpc')
         self.assertEqual(request.call_args.args[1]['value'], 5.0)
-        control.send(c, states, {'signal': 5.0, 'error': 0.0}, clock=t+3600, mpc=learning(1.0))
-        self.assertEqual(request.call_args.args[1]['value'], 3.0)
+        # After a steady hour the first step is still one half degree; the rest follows at 2 °C/h.
+        for minutes, sent in ((60, 4.5), (75, 4.0), (90, 3.5), (105, 3.0), (120, 3.0)):
+            control.send(c, states, {'signal': 5.0, 'error': 0.0}, clock=t+minutes*60, mpc=learning(1.0))
+            self.assertEqual(request.call_args.args[1]['value'], sent)
+            states[0]['state'] = str(sent)
         self.assertEqual((control.get()['source'], control.get()['decision']['source']), ('mpc', 'mpc'))
         self.assertTrue(control.get()['active'])
 

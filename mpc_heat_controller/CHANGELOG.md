@@ -1,3 +1,12 @@
+# 0.21.0
+
+- PI behåller I-delen när börvärdet eller komfortområdet ändras. Tidigare nollställdes den, vilket flyttade signalen med hela I-delens storlek oavsett åt vilket håll börvärdet ändrades.
+- I-delen sparas varje minut under aktiv styrning och återanvänds vid start, automatisk återstart och efter paus, om den är högst 24 timmar gammal och PI-inställningar, givarval, utgång och signalgränser är oförändrade. Annars börjar den från noll som tidigare. Ändrade PI-inställningar, demo och beräkningsuppehåll över 15 minuter nollställer fortfarande.
+- Större signaländringar skickas i halvgradssteg i takt med *Maximal signaländring*. Tidigare hölls hela ändringen tillbaka tills den rymdes och skickades sedan i ett hopp, och efter en lång period med oförändrat värde kunde ett hopp på flera grader skickas direkt. Det gällde främst växlingar mellan PI och MPC.
+- När PI tagit över vid en komfortgräns behåller PI styrningen tills temperaturen är 0,2 °C innanför gränsen igen, dock aldrig förbi börvärdet. Tidigare kunde PI och MPC byta plats varje minut vid gränsen.
+- Simulering med ett antaget hus: en nollställd I-del på −2,7 °C gav en puckel på cirka +0,4 °C; med behållen I-del uteblev den. Vid sänkt börvärde 21,5 → 21,0 °C steg temperaturen tidigare först till 21,7 °C och nådde ±0,1 °C efter cirka 100 timmar, nu efter cirka 50 timmar utan felriktad start. Resultaten gäller simuleringen, inte en mätning i huset.
+- Husmodellen, kvalitetskraven, watchdog, signalgränser och kvittens är oförändrade.
+
 # 0.20.0
 
 - Ersätter den fasta 70/30-delningen med rullande validering under senaste veckan. Varje testdygn använder modeller tränade på högst 14 tidigare dygn, med minst 168 kompletta timpar. Framtida innetemperaturer används aldrig i testdygnets träning eller rekursiva prognos. Alla modeller och horisonter använder samma teststarter.
