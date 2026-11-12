@@ -4,7 +4,7 @@ Window lengths are fixed before validation. Future room temperatures are
 recursive predictions. Outdoor and control inputs are historical oracle inputs.
 """
 import math
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 def features(points, t, temperatures, lag):
     hour=timedelta(hours=1)
@@ -20,6 +20,7 @@ def features(points, t, temperatures, lag):
 TRAIN_DAYS = 14
 VALIDATION_DAYS = 7
 MIN_TRAIN_PAIRS = 168
+MIN_VALIDATION_WINDOWS = 24
 
 
 def fit(points, train, solve, lag):
@@ -35,7 +36,9 @@ def fit(points, train, solve, lag):
         for i in range(1, width): a[i][i] += 0.01
     b = [sum(x[i]*y for x, y in zip(xs, ys))/count for i in range(width)]
     return {'name': 'lag6' if lag else 'linear', 'coefficients': solve(a, b),
-            'means': means, 'scales': scales, 'ridge': 0.01 if lag else 0}
+            'means': means, 'scales': scales, 'ridge': 0.01 if lag else 0,
+            'training_start': train[0].isoformat(),
+            'training_end': (train[-1]+timedelta(hours=1)).isoformat()}
 
 
 def trajectory(points, model, t, actual):
@@ -63,8 +66,10 @@ def compare(points, solve, kept=()):
     The 14-day window and 7-day evaluation period are fixed, not tuned here.
 
     `kept` holds models from an earlier training. Their unchanged coefficients are
-    scored on the same windows and returned as `kept_metrics`, so the caller can
-    tell whether a new fit is better than the one already in use.
+    scored on the same windows and returned as `kept_metrics`. Those windows must
+    start at or after every kept model's training end, so all predicted outcomes
+    are unseen by both sides. Too few such windows defers the comparison without
+    refreshing the previous validation.
     """
     hour = timedelta(hours=1)
     times = sorted(points)
@@ -80,6 +85,20 @@ def compare(points, solve, kept=()):
     actual = {t: v[0] for t, v in points.items()}
     errors = {name: {h: [] for h in (1, 6, 12, 24)} for name in ('linear', 'lag6', 'persistence')}
     kept = {m['name']: m for m in kept if len(m.get('coefficients', ())) == len(features(points, eligible[-1], actual, m['name'] == 'lag6'))}
+    training_ends = {}
+    for name, model in list(kept.items()):
+        try:
+            end = datetime.fromisoformat(model['training_end'])
+            if end.tzinfo is None: raise ValueError()
+            training_ends[name] = end
+        except (KeyError, TypeError, ValueError):
+            # Without a training boundary we cannot establish unseen test data.
+            del kept[name]
+    if training_ends:
+        starts = [t for t in starts if t >= max(training_ends.values())]
+        if len(starts) < MIN_VALIDATION_WINDOWS:
+            raise ValueError('För få gemensamma testfönster efter den behållna modellens träning; '
+                             f'har {len(starts)}, kräver minst {MIN_VALIDATION_WINDOWS}. Föregående validering behålls utan ny tidsstämpel.')
     kept_errors = {name: {h: [] for h in (1, 6, 12, 24)} for name in kept}
     folds, used, example = {}, [], []
     for t in starts:
@@ -116,6 +135,9 @@ def compare(points, solve, kept=()):
                     'predicted': trajectories[0][h], 'lagged': trajectories[1][h]} for h in range(24)]
     if not used:
         raise ValueError('Inga kompletta rullande 24-timmars testfönster under senaste veckan. Kräver sex timmars förhistorik och minst 168 tidigare träningstimmar.')
+    if kept and len(used) < MIN_VALIDATION_WINDOWS:
+        raise ValueError('För få utvärderade gemensamma testfönster efter den behållna modellens träning; '
+                         f'kräver minst {MIN_VALIDATION_WINDOWS}.')
     models = [fit(points, deploy_train, solve, lag) for lag in (False, True)]
     metrics = [{'hours': h, 'windows': len(used),
                 'mae': sum(errors['linear'][h])/len(used),

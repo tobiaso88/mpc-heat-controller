@@ -1,3 +1,9 @@
+# 0.22.1
+
+- Behållen husmodell jämförs bara på gemensamma testfönster vars prognosutfall ligger efter dess träningsslut. Tidigare kunde modellen bedömas på egna träningsdata. Om färre än 24 sådana fönster finns behålls föregående validering utan att dess tidsstämpel förnyas; färskhetsgränsen på 48 timmar gäller fortsatt.
+- Testtimmar räknas från den av Home Assistant bekräftade utgångens avvikelse från PI efter avrundning och signalgränser, minst 0,5 °C åt avsett håll. Begärd testsignal som klipps bort, väntar på kvittens eller ännu går åt föregående blocks håll räknas inte.
+- Kvalitetsversionen höjs. Äldre loggposter som bara visar begärd testsignal räknas inte som bekräftade testtimmar; nytt underlag behöver samlas innan modellen godkänns igen.
+
 # 0.22.0
 
 - Testsignal: när MPC-inlärning är påslagen, aktiv styrning är igång och ingen husmodell är godkänd lägger PI på +1 °C i åtta timmar och sedan −1 °C i åtta timmar, löpande (högst *Största avvikelse från PI*). PI ensam knyter signalen till utetemperatur och rumstemperatur, så data från enbart PI-styrning kan inte visa vad signalen gör. Testsignalen pausar utanför komfortområdet och körs inte när en godkänd modell bara saknar plan.

@@ -246,9 +246,21 @@ class Control:
                 self.decision=decision;self.guard=decision.get('guard')
                 clock=time.monotonic() if clock is None else clock
                 self.verify_output(current,step,clock)
-                if self.last_dispatch is not None and clock-self.last_dispatch<self.DISPATCH_SECONDS:return decision
                 lo=max(low,c['signal_min']);hi=min(high,c['signal_max'])
                 min_tick=math.ceil(lo*2-1e-9);max_tick=math.floor(hi*2+1e-9)
+                if 'test_signal' in decision:
+                    # Credit the observed HA output, never the proposal or an unacknowledged
+                    # write. Compare with PI on the same bounded half-degree grid. During a
+                    # sign change the preceding block's offset must not count for the new one.
+                    test=decision['test_signal']
+                    sent_test=(self.last_command or {}).get('test_signal',0)
+                    baseline=max(min_tick,min(max_tick,math.floor(pi['signal']*2+0.5)))/2
+                    effective=0.0
+                    if self.last_source=='pi' and sent_test*test>0 and self.pending_ack is None and abs(current-self.last_sent)<1e-6:
+                        offset=current-baseline
+                        if offset*test>0:effective=math.copysign(min(abs(test),abs(offset)),test)
+                    decision['applied_test_signal']=effective
+                if self.last_dispatch is not None and clock-self.last_dispatch<self.DISPATCH_SECONDS:return decision
                 value=max(min_tick,min(max_tick,math.floor(proposed*2+0.5)))/2
                 # The allowance grows with time since the last change, up to one half-degree step or one
                 # dispatch interval's worth. A larger change is taken in steps at pi_rate, never held back
@@ -269,7 +281,7 @@ class Control:
                 if value!=self.last_sent:self.changed_at=clock-max(0,allowance-abs(value-self.last_sent))/rate
                 self.last_sent=value
                 self.pending_ack={'previous':previous,'sent_at':clock} if value!=previous else None
-                self.last_command={'value':value,'sent_at':time.time()}
+                self.last_command={'value':value,'sent_at':time.time(),'test_signal':decision.get('test_signal',0)}
                 self.last_source=decision['source']
                 self.info={'active':True,'value':value,'sent_at':time.time(),'source':decision['source'],'source_reason':decision['reason'],
                            'message':('MPC' if decision['source']=='mpc' else 'PI')+'-kommando skickat via HA. Detta är inte kvittens från värmepumpen.'}

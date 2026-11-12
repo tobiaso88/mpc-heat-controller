@@ -9,15 +9,15 @@ from datetime import datetime, timezone, timedelta
 
 from .model import evaluate_points
 from . import model_store
-from .comparison import features, TRAIN_DAYS
+from .comparison import features, TRAIN_DAYS, MIN_VALIDATION_WINDOWS
 from .pv_history import recovered_zeros, STALE_PV, is_zero
 
-QUALITY_VERSION = 6
+QUALITY_VERSION = 7
 QUALITY_HORIZONS = (6, 12, 24)
 # Absolute limit for display-only shadow proposals, still bounded by persistence.
 MAX_MAE = 0.35
 HARD_MAX_MAE = 0.8
-MIN_WINDOWS = 24
+MIN_WINDOWS = MIN_VALIDATION_WINDOWS
 RESPONSE_HOURS = 12
 # Outside this range the signal either does next to nothing, which makes the planner push it
 # to its limits, or more than any heat curve can deliver.
@@ -122,8 +122,8 @@ def local_points(data, mapping):
 
 
 def test_hours(data, since):
-    """UTC hours during which the test signal was sent: +1 for a raised signal, -1 for a lowered one.
-    Only this variation is known to be independent of weather and room temperature."""
+    """UTC hours with a confirmed test offset of at least half a degree.
+    Legacy requested-only records cannot establish an applied test signal."""
     path = data / 'measurements.sqlite'
     if not path.exists():
         return {}
@@ -135,11 +135,11 @@ def test_hours(data, since):
     for stamp, raw in rows:
         try:
             moment = datetime.fromisoformat(stamp.replace('Z', '+00:00'))
-            test = (json.loads(raw).get('decision') or {}).get('test_signal') or 0
+            test = (json.loads(raw).get('decision') or {}).get('applied_test_signal') or 0
             count = counts[moment.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)]
             count[0] += 1
-            count[1] += test > 0
-            count[2] += test < 0
+            count[1] += test >= 0.5-1e-9
+            count[2] += test <= -0.5+1e-9
         except (ValueError, TypeError, AttributeError):
             continue
     return {hour: 1 if plus >= minus else -1 for hour, (total, plus, minus) in counts.items()

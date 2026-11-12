@@ -23,7 +23,7 @@ def add_test_signal(data):
         db.execute('CREATE TABLE IF NOT EXISTS control_samples (time TEXT PRIMARY KEY, result TEXT NOT NULL)')
         for hour in hours:
             sign = 1 if int(hour.timestamp()//(8*3600)) % 2 == 0 else -1
-            result = json.dumps({'source': 'pi', 'decision': {'source': 'pi', 'test_signal': sign}})
+            result = json.dumps({'source': 'pi', 'decision': {'source': 'pi', 'test_signal': sign, 'applied_test_signal': sign}})
             db.executemany('INSERT OR REPLACE INTO control_samples VALUES (?,?)',
                            [((hour+timedelta(minutes=m)).isoformat(), result) for m in range(30)])
 
@@ -485,7 +485,7 @@ class IdentificationTests(unittest.TestCase):
         rows = []
         for hour, signs in enumerate(([1]*40, [1]*20, [1]*30+[-1]*30, [-1]*50+[0]*10, [0]*60)):
             rows += [((start+timedelta(hours=hour, minutes=m)).isoformat(),
-                      json.dumps({'source': 'pi', 'decision': {'test_signal': sign} if sign else {}})) for m, sign in enumerate(signs)]
+                      json.dumps({'source': 'pi', 'decision': {'test_signal': sign, 'applied_test_signal': sign} if sign else {}})) for m, sign in enumerate(signs)]
         with tempfile.TemporaryDirectory() as directory:
             data = Path(directory)
             self.assertEqual(test_hours(data, start), {})
@@ -539,11 +539,11 @@ class IdentificationTests(unittest.TestCase):
         from app.model import solve
         start = datetime(2026, 1, 1, tzinfo=timezone.utc)
         points, temp = {}, 21.0
-        for hour in range(600):
+        for hour in range(648):
             out, signal = 5+4*math.sin(hour/19), 3+3*math.sin(hour/13)
             points[start+timedelta(hours=hour)] = (temp, out, signal)
             temp += 0.5+0.025*(out-temp)-0.01*signal
-        first = compare(points, solve)
+        first = compare(dict(list(points.items())[:600]), solve)
         self.assertEqual(first['kept_metrics'], {})
         runaway = dict(first['models'][1], coefficients=[1e6]*8)
         wrong_width = dict(first['models'][0], name='linear', coefficients=[0]*5, means=[0]*5, scales=[1]*5)
@@ -551,7 +551,44 @@ class IdentificationTests(unittest.TestCase):
         self.assertEqual(list(again['kept_metrics']), ['linear'])
         self.assertEqual(sorted(again['kept_metrics']['linear']), [1, 6, 12, 24])
         self.assertLess(again['kept_metrics']['linear'][24], 1e-5)
+        self.assertEqual(again['validation_start'], first['training_end'])
+        self.assertEqual(again['common_windows'], 26)
+        # Both sides and persistence must use exactly the same unseen outcomes.
+        from app.comparison import trajectory
+        actual = {t: v[0] for t, v in points.items()}
+        boundary = datetime.fromisoformat(first['training_end'])
+        starts = [boundary+timedelta(hours=h) for h in range(26)]
+        for metric in again['metrics']:
+            h = metric['hours']
+            expected = sum(abs(trajectory(points, first['models'][0], t, actual)[h-1]
+                               - actual[t+timedelta(hours=h)]) for t in starts)/len(starts)
+            self.assertAlmostEqual(again['kept_metrics']['linear'][h], expected)
+            baseline = sum(abs(actual[t]-actual[t+timedelta(hours=h)]) for t in starts)/len(starts)
+            self.assertAlmostEqual(metric['baseline_mae'], baseline)
         self.assertEqual(compare(points, solve, kept=[wrong_width])['kept_metrics'], {})
+        unknown = {k: v for k, v in first['models'][0].items() if k != 'training_end'}
+        self.assertEqual(compare(points, solve, kept=[unknown])['kept_metrics'], {})
+        # At the next daily check only two complete windows are unseen. Do not
+        # replace this with a deceptively good score on the old training data.
+        with self.assertRaisesRegex(ValueError, 'har 2, kräver minst 24'):
+            compare(dict(list(points.items())[:624]), solve, kept=first['models'])
+
+    def test_requested_or_too_small_test_offsets_do_not_count(self):
+        from app.auto_model import test_hours
+        start = datetime(2026, 11, 1, tzinfo=timezone.utc)
+        decisions = [{'test_signal': 1}, {'test_signal': 1, 'applied_test_signal': 0},
+                     {'test_signal': 1, 'applied_test_signal': 0.25},
+                     {'test_signal': 1, 'applied_test_signal': 0.5},
+                     {'test_signal': -1, 'applied_test_signal': -0.5}]
+        with tempfile.TemporaryDirectory() as directory:
+            data = Path(directory)
+            with sqlite3.connect(data / 'measurements.sqlite') as db:
+                db.execute('CREATE TABLE control_samples (time TEXT PRIMARY KEY, result TEXT NOT NULL)')
+                for h, decision in enumerate(decisions):
+                    db.executemany('INSERT INTO control_samples VALUES (?,?)', [
+                        ((start+timedelta(hours=h, minutes=m)).isoformat(), json.dumps({'decision': decision}))
+                        for m in range(60)])
+            self.assertEqual(test_hours(data, start), {start+timedelta(hours=3): 1, start+timedelta(hours=4): -1})
 
     def retained(self, new_mae, old_mae, old=None, new_tested=True):
         from app.auto_model import retain
@@ -618,6 +655,28 @@ class IdentificationTests(unittest.TestCase):
             model = first['report']['models'][1]
             self.assertEqual(model['trained_at'], clock.isoformat())
             self.assertGreaterEqual(min(model['test_hours'].values()), MIN_TEST_HOURS)
+
+            def extend_log(until):
+                with sqlite3.connect(data / 'measurements.sqlite') as db:
+                    stamp, raw = db.execute('SELECT time, readings FROM samples ORDER BY time DESC LIMIT 1').fetchone()
+                    last = int((datetime.fromisoformat(stamp)-start).total_seconds()/3600)
+                    temperature = json.loads(raw)[0]['value']
+                    for h in range(last+1, until):
+                        temperature += 0.5+0.025*(5+4*math.sin((h-1)/19)-temperature)-0.01*(3+3*math.sin((h-1)/13))
+                        readings = [{'entity': entity, 'value': value, 'quality': 'OK'} for entity, value in
+                                    [('sensor.room', temperature), ('sensor.out', 5+4*math.sin(h/19)),
+                                     ('number.signal', 3+3*math.sin(h/13))]]
+                        db.execute('INSERT INTO samples VALUES (?,?,?)',
+                                   ((start+timedelta(hours=h)).isoformat(), json.dumps(readings), json.dumps(config)))
+                add_test_signal(data)
+
+            extend_log(274)
+            trainer.maybe_train(config, clock+timedelta(days=1))
+            waiting = model_store.load_auto(data)
+            self.assertIn('gemensamma testfönster', waiting['status']['message'])
+            self.assertEqual(waiting['report']['validation_end'], first['report']['validation_end'])
+            self.assertEqual(waiting['report']['models'], first['report']['models'])
+            extend_log(298)
             received = {}
             from app.model import evaluate_points
             def slightly_better(points, mapping, kept=(), **kwargs):
@@ -627,25 +686,27 @@ class IdentificationTests(unittest.TestCase):
                 report['kept_metrics'] = {name: {h: 0.2 for h in (1, 6, 12, 24)} for name in ('linear', 'lag6')}
                 return report
             with patch('app.auto_model.evaluate_points', side_effect=slightly_better):
-                trainer.maybe_train(config, clock+timedelta(days=1, hours=1))
+                trainer.maybe_train(config, clock+timedelta(days=2))
             second = model_store.load_auto(data)
             self.assertEqual([m['name'] for m in received['kept']], ['linear', 'lag6'])
             self.assertEqual(second['status']['state'], 'ready')
-            self.assertEqual(second['status']['trained_at'], (clock+timedelta(days=1, hours=1)).isoformat())
+            self.assertEqual(second['status']['trained_at'], (clock+timedelta(days=2)).isoformat())
+            self.assertGreaterEqual(datetime.fromisoformat(second['report']['validation_start']),
+                                    datetime.fromisoformat(model['training_end']))
             kept = second['report']['models'][1]
             self.assertTrue(kept['kept'])
             self.assertEqual((kept['trained_at'], kept['coefficients']), (model['trained_at'], model['coefficients']))
             # A day whose data cannot be evaluated keeps the model for the next attempt.
             with patch('app.auto_model.evaluate_points', side_effect=ValueError('Inga kompletta rullande 24-timmars testfönster.')):
                 trainer.last_check = None
-                trainer.maybe_train(config, clock+timedelta(days=2, hours=2))
+                trainer.maybe_train(config, clock+timedelta(days=3, hours=2))
             gap = model_store.load_auto(data)
             self.assertEqual(gap['status']['state'], 'needs_data')
             self.assertIn('testfönster', gap['status']['quality_reasons']['temperature']['validation'][0])
             self.assertEqual(gap['status']['evaluations']['temperature']['models'][1]['coefficients'], model['coefficients'])
             with patch('app.auto_model.evaluate_points', side_effect=slightly_better):
                 trainer.last_check = None
-                trainer.maybe_train(config, clock+timedelta(days=2, hours=4))
+                trainer.maybe_train(config, clock+timedelta(days=3, hours=4))
             self.assertEqual(model_store.load_auto(data)['report']['models'][1]['coefficients'], model['coefficients'])
             # A model trained for another sensor selection is never carried over.
             other = dict(config, outdoor='sensor.other')
@@ -655,7 +716,7 @@ class IdentificationTests(unittest.TestCase):
                                (raw.replace('sensor.out', 'sensor.other'), json.dumps(other), stamp))
             with patch('app.auto_model.evaluate_points', side_effect=slightly_better):
                 trainer.last_check = None
-                trainer.maybe_train(other, clock+timedelta(days=1, hours=2))
+                trainer.maybe_train(other, clock+timedelta(days=3, hours=5))
             self.assertEqual(received['kept'], ())
 
 

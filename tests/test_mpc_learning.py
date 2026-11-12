@@ -169,6 +169,42 @@ class TestSignalTests(unittest.TestCase):
                 collector.store_control((hour+timedelta(minutes=minute)).isoformat(), 'pi', decision)
             self.assertEqual(test_hours(data, hour), {hour: 1})
 
+    def test_clipped_and_rate_limited_requests_do_not_collect_test_hours(self):
+        from app.telemetry import Collector
+        from app.auto_model import test_hours
+        for sign, settings in ((1, {'signal_max': 5}), (-1, {'signal_min': 5}),
+                               (1, {'pi_rate': 0.1})):
+            with self.subTest(sign=sign, settings=settings), tempfile.TemporaryDirectory() as directory:
+                c, states, request, control = SendTests.setup_control(self, **settings)
+                collector = Collector(lambda: c, Path(directory))
+                t = control.changed_at
+                hour = datetime(2026, 11, 1, 12, tzinfo=timezone.utc)
+                with patch('app.control.Control.test_signal', return_value=sign):
+                    for minute in range(60):
+                        decision = control.send(c, states, self.pi, clock=t+minute*60, mpc=self.no_model)
+                        self.assertEqual(decision['applied_test_signal'], 0)
+                        self.assertEqual(request.call_args.args[1]['value'], 5)
+                        collector.store_control((hour+timedelta(minutes=minute)).isoformat(), 'pi', decision)
+                self.assertEqual(test_hours(Path(directory), hour), {})
+
+    def test_only_confirmed_offsets_in_the_requested_direction_count(self):
+        c, states, request, control = SendTests.setup_control(self)
+        t = control.changed_at
+        with patch('app.control.Control.test_signal', return_value=1):
+            control.send(c, states, self.pi, clock=t, mpc=self.no_model)
+            decision = control.send(c, states, self.pi, clock=t+900, mpc=self.no_model)
+            self.assertEqual(request.call_args.args[1]['value'], 5.5)
+            self.assertEqual(decision['applied_test_signal'], 0)
+            # HA still has the preceding value: a successful write alone is insufficient.
+            decision = control.send(c, states, self.pi, clock=t+960, mpc=self.no_model)
+            self.assertEqual(decision['applied_test_signal'], 0)
+            states[0]['state'] = '5.5'
+            decision = control.send(c, states, self.pi, clock=t+1020, mpc=self.no_model)
+            self.assertEqual(decision['applied_test_signal'], 0.5)
+        with patch('app.control.Control.test_signal', return_value=-1):
+            decision = control.send(c, states, self.pi, clock=t+1080, mpc=self.no_model)
+            self.assertEqual(decision['applied_test_signal'], 0)
+
 
 class SendTests(unittest.TestCase):
     def setup_control(self, **extra):

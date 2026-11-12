@@ -2,6 +2,10 @@
 
 Home Assistant-app för komfortvärme med eget webbgränssnitt, PI och experimentell modellutvärdering. Mål: HA OS 2026.9.1, Raspberry Pi 4 aarch64, 8 GB.
 
+## Version 0.22.1
+
+- Rättvisare modelljämförelse: behållen husmodell prövas bara på gemensamma testfönster efter dess träningsslut. Testtimmar räknas först när signalens avvikelse från PI bekräftats i Home Assistant; bortklippta eller ännu inte bekräftade ändringar räknas inte. Äldre poster med enbart begärd testsignal räknas inte, så nytt underlag behöver samlas innan modellen godkänns igen.
+
 ## Version 0.22.0
 
 - Husmodellen kan nu lära sig vad styrsignalen gör: utan godkänd modell lägger PI på en testsignal på ±1 °C i åttatimmarsblock, och en modell godkänns först när träningsperioden innehåller minst 48 timmar testsignal åt vardera hållet. Modellen i bruk behålls tills en nytränad är tydligt bättre i stället för att ersättas varje dygn. Kräver MPC-inlärning och aktiv styrning.
