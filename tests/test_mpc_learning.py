@@ -116,6 +116,60 @@ class GuardTests(unittest.TestCase):
         self.assertIsNone(control.guard)
 
 
+class TestSignalTests(unittest.TestCase):
+    """Without an approved model, PI carries ±1 °C in eight-hour blocks so the model can learn the signal."""
+    pi = {'signal': 5.0, 'error': 0.0}
+    no_model = {'learning': {'state': 'blocked', 'model_ready': False, 'reasons': ['Ingen modell är tränad ännu.']}}
+    epoch = datetime.fromtimestamp(0, timezone.utc)
+
+    def test_blocks_alternate_and_are_recorded(self):
+        signal, decision = Control.choose(config(), self.pi, self.no_model, now=self.epoch+timedelta(hours=7, minutes=59))
+        self.assertEqual((signal, decision['source'], decision['test_signal'], decision['pi_signal']), (6.0, 'pi', 1.0, 5.0))
+        self.assertIn('testsignal +1 °C', decision['reason'])
+        signal, decision = Control.choose(config(), self.pi, self.no_model, now=self.epoch+timedelta(hours=8))
+        self.assertEqual((signal, decision['test_signal']), (4.0, -1.0))
+        self.assertEqual(Control.choose(config(), self.pi, self.no_model, now=self.epoch+timedelta(hours=16))[0], 6.0)
+        signal, decision = Control.choose(config(mpc_max_deviation=0.5), self.pi, self.no_model, now=self.epoch)
+        self.assertEqual((signal, decision['test_signal']), (5.5, 0.5))
+        self.assertIn('+0,5 °C', decision['reason'])
+
+    def test_only_a_missing_model_and_a_comfortable_room_get_the_test_signal(self):
+        for mpc in ({'learning': {'state': 'blocked', 'model_ready': True, 'reasons': ['Väderprognosen saknas.']}},
+                    {'learning': {'state': 'blocked', 'reasons': ['Okänt.']}}, {'state': 'error', 'plan': []}, None):
+            signal, decision = Control.choose(config(), self.pi, mpc, now=self.epoch)
+            self.assertEqual(signal, 5.0)
+            self.assertNotIn('test_signal', decision)
+        self.assertEqual(Control.choose(dict(config(), mpc_learning=False), self.pi, self.no_model, now=self.epoch)[0], 5.0)
+        for error, guard in ((0.6, 'cold'), (-0.6, 'warm')):
+            signal, decision = Control.choose(config(), {'signal': 5.0, 'error': error}, self.no_model, now=self.epoch)
+            self.assertEqual((signal, decision['guard']), (5.0, guard))
+            self.assertIn('pausar', decision['reason'])
+        # Held off until the room is clearly back inside, like MPC.
+        self.assertEqual(Control.choose(config(), {'signal': 5.0, 'error': 0.4}, self.no_model, now=self.epoch, guard='cold')[0], 5.0)
+        self.assertEqual(Control.choose(config(), {'signal': 5.0, 'error': 0.3}, self.no_model, now=self.epoch, guard='cold')[0], 6.0)
+
+    def test_sent_in_half_degree_steps_and_logged_for_training(self):
+        from app.telemetry import Collector
+        from app.auto_model import test_hours
+        c, states, request, control = SendTests.setup_control(self)
+        t = control.changed_at
+        sent = []
+        with patch('app.control.Control.test_signal', return_value=1.0):
+            for minutes in (5, 20, 35, 50):
+                decision = control.send(c, states, self.pi, clock=t+minutes*60, mpc=self.no_model)
+                sent.append(request.call_args.args[1]['value'])
+                states[0]['state'] = str(sent[-1])
+        self.assertEqual(sent, [5.0, 5.5, 6.0, 6.0])
+        self.assertEqual((decision['source'], decision['test_signal']), ('pi', 1.0))
+        with tempfile.TemporaryDirectory() as directory:
+            data = Path(directory)
+            collector = Collector(lambda: c, data)
+            hour = datetime(2026, 11, 1, 12, tzinfo=timezone.utc)
+            for minute in range(40):
+                collector.store_control((hour+timedelta(minutes=minute)).isoformat(), 'pi', decision)
+            self.assertEqual(test_hours(data, hour), {hour: 1})
+
+
 class SendTests(unittest.TestCase):
     def setup_control(self, **extra):
         c = config(**extra)
@@ -231,6 +285,15 @@ class LearningModelTests(unittest.TestCase):
             with patch.object(trainer, 'hourly_points', return_value={}):
                 fallback = trainer.result(c, readings, forecast, states)
             self.assertEqual((fallback['learning']['state'], fallback['learning']['model']), ('ready', 'linear'))
+            # The model is approved in both cases; only a missing model calls for the test signal.
+            self.assertTrue(result['learning']['model_ready'])
+            without_forecast = trainer.result(c, readings, [], states)
+            self.assertEqual((without_forecast['learning']['state'], without_forecast['learning']['model_ready']), ('blocked', True))
+            untested = dict(learning_report(), mapping=model_store.load_auto(data)['status']['evaluations']['temperature']['mapping'])
+            for model in untested['models']: model['test_hours'] = {'plus': 0, 'minus': 0}
+            blocked = trainer.learning(c, {'status': {'state': 'needs_data', 'evaluations': {'temperature': untested}}}, 21.0, 4.0, forecast, None, datetime.now(timezone.utc))
+            self.assertEqual((blocked['state'], blocked['model_ready']), ('blocked', False))
+            self.assertTrue(any('testsignal' in r for r in blocked['reasons']))
             shadow_only = trainer.result(dict(c, mpc_learning=False), readings, forecast, states)
             self.assertNotIn('learning', shadow_only)
             self.assertEqual(shadow_only['plan'], [])

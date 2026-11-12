@@ -1,3 +1,16 @@
+# 0.22.0
+
+- Testsignal: när MPC-inlärning är påslagen, aktiv styrning är igång och ingen husmodell är godkänd lägger PI på +1 °C i åtta timmar och sedan −1 °C i åtta timmar, löpande (högst *Största avvikelse från PI*). PI ensam knyter signalen till utetemperatur och rumstemperatur, så data från enbart PI-styrning kan inte visa vad signalen gör. Testsignalen pausar utanför komfortområdet och körs inte när en godkänd modell bara saknar plan.
+- Nytt krav för både skuggförslag och MPC-inlärning: modellens träningsperiod ska innehålla minst 48 timmar testsignal åt vardera hållet. Modeller tränade på enbart PI-data godkänns inte längre. Utan MPC-inlärning och aktiv styrning körs ingen testsignal och ingen modell godkänns.
+- Modellen i bruk behålls. Varje dygn prövas den med oförändrade koefficienter på samma testfönster som en nytränad modell, och den byts ut först när den nya klarar kraven och har minst 10 % lägre fel, eller när den själv inte längre klarar kraven. Tidigare ersattes modellen varje dygn och försvann helt om den nya underkändes. Ett dygn vars data inte går att utvärdera kostar inte längre modellen.
+- Kravet att driftmodellens träning ska vara högst 48 timmar gammal är borttaget. Valideringen måste fortfarande vara högst 48 timmar gammal.
+- Persistenskravet gäller inte när modellens fel redan är litet (högst 0,15 °C vid 6/12/24 h; högst 0,1 °C vid 1 h för inlärning). Jämn reglering gjorde annars "temperaturen står still" nästan omöjlig att slå.
+- Signalens samlade effekt vid 6–12 h ska ligga mellan −1 och −0,02 °C per °C (tidigare −6 till 0). En effekt nära noll godkänns inte längre.
+- Hem visar *PI med testsignal* när den körs. Lärande visar insamlade testtimmar, när modellen i bruk tränades och att den behålls.
+- Valet mellan enkel modell och fördröjningsmodell är trögt på samma sätt: den typ som används behålls tills den andra har minst 10 % lägre fel.
+- Simulering med ett antaget hus och appens egen regler-, tränings- och planeringskod, fyra väderserier: efter fem dygn testsignal godkändes en modell, och MPC styrde sedan 99–100 % av tiden i 36 dygn med 27–37 % lägre RMS-fel mot börvärdet än enbart PI samma dygn. Under testdygnen var felet cirka 10 % högre än med enbart PI. Modellen byttes 1–3 gånger på 36 dygn. Resultaten gäller simuleringen, inte en mätning i huset.
+- Kvalitetsversionen höjs, så sparade modeller prövas om mot de nya kraven. Träningsfönstret på 14 dygn, felgränserna 0,35/0,8 °C, planeraren, PI, watchdog och signalgränser är oförändrade.
+
 # 0.21.0
 
 - PI behåller I-delen när börvärdet eller komfortområdet ändras. Tidigare nollställdes den, vilket flyttade signalen med hela I-delens storlek oavsett åt vilket håll börvärdet ändrades.

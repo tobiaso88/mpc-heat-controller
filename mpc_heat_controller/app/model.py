@@ -56,11 +56,11 @@ def evaluate(content, mapping):
     return evaluate_points(points, mapping, invalid_rows=invalid,
                            incomplete_hours=len(buckets)-len(points), source='csv')
 
-def evaluate_points(points, mapping, invalid_rows=0, incomplete_hours=0, source='local_log'):
+def evaluate_points(points, mapping, invalid_rows=0, incomplete_hours=0, source='local_log', kept=()):
     times=sorted(points)
     if len(times)<240: raise ValueError('Minst 240 kompletta timvärden behövs. Välj en längre gemensam period.')
     from .comparison import compare
-    result = compare(points, solve)
+    result = compare(points, solve, kept)
     return dict(result, status="offline_candidate", complete_hours=len(times), invalid_rows=invalid_rows,
                 incomplete_hours=incomplete_hours, mapping=mapping, source=source,
                 message="Offlinejämförelse, inte aktiverad. Använder känd historisk utetemperatur och styrsignal, inte alternativa MPC-kommandon.",

@@ -38,12 +38,33 @@ def fit(points, train, solve, lag):
             'means': means, 'scales': scales, 'ridge': 0.01 if lag else 0}
 
 
-def compare(points, solve):
+def trajectory(points, model, t, actual):
+    """24 recursive hourly predictions from t; None when the model runs away."""
+    hour = timedelta(hours=1)
+    temperatures = {t-i*hour: actual[t-i*hour] for i in range(7)}
+    path = []
+    for h in range(24):
+        current = t+h*hour
+        x = features(points, current, temperatures, model['name'] == 'lag6')
+        prediction = temperatures[current]+sum(c*(v-m)/s for c, v, m, s in
+            zip(model['coefficients'], x, model['means'], model['scales']))
+        if not math.isfinite(prediction) or abs(prediction) > 1000:
+            return None
+        temperatures[current+hour] = prediction
+        path.append(prediction)
+    return path
+
+
+def compare(points, solve, kept=()):
     """Evaluate a fixed daily refitting policy, then fit its deployment models.
 
     Every validation fold learns only from outcomes strictly before its UTC day.
     Deployment coefficients are fitted separately and never score their own data.
     The 14-day window and 7-day evaluation period are fixed, not tuned here.
+
+    `kept` holds models from an earlier training. Their unchanged coefficients are
+    scored on the same windows and returned as `kept_metrics`, so the caller can
+    tell whether a new fit is better than the one already in use.
     """
     hour = timedelta(hours=1)
     times = sorted(points)
@@ -58,6 +79,8 @@ def compare(points, solve):
               and all(t+h*hour in points for h in range(-6, 25))]
     actual = {t: v[0] for t, v in points.items()}
     errors = {name: {h: [] for h in (1, 6, 12, 24)} for name in ('linear', 'lag6', 'persistence')}
+    kept = {m['name']: m for m in kept if len(m.get('coefficients', ())) == len(features(points, eligible[-1], actual, m['name'] == 'lag6'))}
+    kept_errors = {name: {h: [] for h in (1, 6, 12, 24)} for name in kept}
     folds, used, example = {}, [], []
     for t in starts:
         cutoff = t.replace(hour=0)
@@ -71,21 +94,18 @@ def compare(points, solve):
                                  'training_end': (train[-1]+hour).isoformat(), 'training_pairs': len(train)}
         fold = folds[cutoff]
         if fold is None: continue
-        trajectories = []
-        for index, model in enumerate(fold['models']):
-            temperatures = {t-i*hour: actual[t-i*hour] for i in range(7)}
-            path = []
-            for h in range(24):
-                current = t+h*hour
-                x = features(points, current, temperatures, index == 1)
-                prediction = temperatures[current]+sum(c*(v-m)/s for c, v, m, s in
-                    zip(model['coefficients'], x, model['means'], model['scales']))
-                if not math.isfinite(prediction) or abs(prediction) > 1000:
-                    raise ValueError('En kandidat är instabil i valideringen. Ingen modell aktiverades.')
-                temperatures[current+hour] = prediction
-                path.append(prediction)
-            trajectories.append(path)
+        trajectories = [trajectory(points, model, t, actual) for model in fold['models']]
+        if None in trajectories:
+            raise ValueError('En kandidat är instabil i valideringen. Ingen modell aktiverades.')
         used.append(t)
+        for name in list(kept):
+            path = trajectory(points, kept[name], t, actual)
+            if path is None:
+                # An earlier model that runs away on fresh data is simply not kept.
+                del kept[name], kept_errors[name]
+                continue
+            for h in (1, 6, 12, 24):
+                kept_errors[name][h].append(abs(path[h-1]-actual[t+h*hour]))
         for h in (1, 6, 12, 24):
             truth = actual[t+h*hour]
             for i, name in enumerate(('linear', 'lag6')):
@@ -102,6 +122,7 @@ def compare(points, solve):
                 'lag_mae': sum(errors['lag6'][h])/len(used),
                 'baseline_mae': sum(errors['persistence'][h])/len(used)} for h in (1, 6, 12, 24)]
     return {'models': models, 'coefficients': models[0]['coefficients'], 'metrics': metrics, 'example': example,
+            'kept_metrics': {name: {h: sum(v)/len(used) for h, v in by_hour.items()} for name, by_hour in kept_errors.items()},
             'training_pairs': len(deploy_train), 'split_at': used[0].isoformat(), 'common_windows': len(used),
             'training_start': deploy_train[0].isoformat(), 'training_end': (deploy_train[-1]+hour).isoformat(),
             'data_end': latest.isoformat(), 'validation_method': 'daily_rolling_14d',

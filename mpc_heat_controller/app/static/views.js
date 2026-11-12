@@ -115,7 +115,7 @@ function renderControl() {
   const facts = [];
   if (c?.last_command) facts.push(['Senast skickat', deg(c.last_command.value), clock(c.last_command.sent_at * 1000)]);
   const pi = t?.pi, plan = t?.mpc?.plan || [], learning = state.settings.mpc_learning ? t?.mpc?.learning : null, decision = c?.decision;
-  if (cs === 'active' && decision) facts.push(['Styr nu', decision.source === 'mpc' ? 'MPC' : 'PI', decision.reason]);
+  if (cs === 'active' && decision) facts.push(['Styr nu', decision.source === 'mpc' ? 'MPC' : decision.test_signal ? 'PI med testsignal' : 'PI', decision.reason]);
   if (finite(pi?.signal)) facts.push(['PI föreslår', deg(pi.signal), cs !== 'active' ? 'beräknat, skickas ej' : learning ? 'räcke och reserv' : 'skickas']);
   if (plan.length) facts.push(['MPC föreslår', deg(plan[0].signal), learning?.state === 'ready' ? (cs === 'active' ? `inom ±${num(state.settings.mpc_max_deviation)} °C från PI` : 'inlärning, skickas när styrningen är aktiv') : 'skuggförslag']);
   else if (learning?.state === 'blocked') facts.push(['MPC', 'Väntar', learning.reasons?.[0] || '']);
@@ -400,15 +400,17 @@ function renderLearning() {
   $('model-message').hidden = learningReady && m.state !== 'ready';
   const labels = {temperature: 'Temperaturmodell', pv: 'Solcellsmodell', cloud: 'Molnmodell'};
   const reasons = m.state === 'ready' ? [] : Object.entries(m.quality_reasons || {}).flatMap(([kind, models]) => Object.values(models || {}).flat().map(r => (labels[kind] || kind) + ': ' + r));
-  const box = $('model-learning');
+  const box = $('model-learning'), tests = m.test_signal;
   box.hidden = !learning;
   box.classList.toggle('warn', !!learning && !learningReady);
   if (learning) box.textContent = learningReady
-    ? `MPC-inlärning är godkänd med ${modelName(learning.model).toLowerCase()} (${{pv: 'solcellsmodell', cloud: 'molnmodell'}[learning.source] || 'temperaturmodell'}). Kravet för inlärning är rätt signalriktning, medelfel högst 0,8 °C och bättre än oförändrad temperatur nästa timme. ${steering}; PI tar över när det är för kallt inne eller planen saknas.`
-    : 'MPC-inlärning väntar: ' + (learning.reasons || []).slice(0, 3).join(' ') + ' PI styr under tiden.';
+    ? `MPC-inlärning är godkänd med ${modelName(learning.model).toLowerCase()} (${{pv: 'solcellsmodell', cloud: 'molnmodell'}[learning.source] || 'temperaturmodell'}). Kravet för inlärning är minst ${tests?.required ?? 48} h testsignal åt vardera hållet i träningsperioden, rimlig signaleffekt och medelfel högst 0,8 °C. ${steering}; PI tar över när det är för kallt inne eller planen saknas.`
+    : 'MPC-inlärning väntar: ' + (learning.reasons || []).slice(0, 3).join(' ') + (learning.model_ready === false
+      ? ` PI styr under tiden med en testsignal på ±1 °C i åttatimmarsblock, när aktiv styrning är igång och innetemperaturen ligger i komfortområdet. PI ensam knyter signalen till vädret, så utan testsignalen går det inte att se vad signalen gör.${tests ? ` Senaste 14 dygnen: ${tests.plus} h med höjd signal och ${tests.minus} h med sänkt, av minst ${tests.required} h vardera.` : ''}`
+      : ' PI styr under tiden.');
   const strict = learningReady && reasons.length;
   $('model-reasons-title').hidden = !strict;
-  $('model-reasons-title').textContent = 'Kvar till det strikta kravet för skuggförslag (0,35 °C). Det behövs inte för inlärningen – modellen tränas om varje dygn och kan klara det med tiden:';
+  $('model-reasons-title').textContent = 'Kvar till det strikta kravet för skuggförslag (0,35 °C). Det behövs inte för inlärningen. En ny modell prövas varje dygn och ersätter den nuvarande först när den är tydligt bättre:';
   $('model-reasons').replaceChildren(...[...reasons, ...(learningReady ? [] : m.plan_blockers || [])].map(text => h('li', {text})));
   const displayed = (learningReady && m.evaluations?.[learning.source]) || m.report;
   renderAccuracy($('accuracy'), displayed?.metrics || [], learningReady ? learning.model : displayed?.selected_model, 'Visas när modellen har tränats – det kräver minst 250 kompletta timmar i skuggläge.');
@@ -417,8 +419,11 @@ function renderLearning() {
   $('model-periods').replaceChildren(...reports.map(([source, report]) => {
     if (!report.training_end) return h('p', {class: 'sub', text: `${labels[source] || source}: äldre modellformat. Perioderna visas efter nästa omträning.`});
     const stale = Date.now() - Date.parse(report.validation_end) > 48 * HOUR;
+    const used = (report.models || []).find(x => x.name === (report.learning_model || report.selected_model || 'lag6'));
+    const tested = used?.test_hours ? ` Testsignal i den perioden: ${used.test_hours.plus} h höjd, ${used.test_hours.minus} h sänkt.` : '';
     return h('p', {class: 'sub'}, h('strong', {text: labels[source] || source}),
-      ` · Driftmodell tränad på ${fullTime(report.training_start)}–${fullTime(report.training_end)} (${report.training_pairs} timpar). `,
+      used?.kept ? ` · Modellen tränades på ${fullTime(used.training_start)}–${fullTime(used.training_end)} och behålls tills en tydligt bättre finns.${tested} Senast prövade ersättare tränades till ${fullTime(report.training_end)}. `
+        : ` · Driftmodell tränad på ${fullTime(report.training_start)}–${fullTime(report.training_end)} (${report.training_pairs} timpar).${tested} `,
       `Rullande validering: starter från ${fullTime(report.validation_start)}, senaste utfall ${fullTime(report.validation_end)}. ${report.common_windows} överlappande testfönster.`,
       stale ? ' Valideringen är äldre än 48 timmar; modellen får inte styra.' : '');
   }));

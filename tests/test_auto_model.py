@@ -12,6 +12,22 @@ from app.core import validate
 from app import model_store
 
 
+TESTED = {'plus': 60, 'minus': 60}
+
+
+def add_test_signal(data):
+    """Log every sampled hour as sent with the test signal, in alternating eight-hour blocks."""
+    with sqlite3.connect(data / 'measurements.sqlite') as db:
+        hours = {datetime.fromisoformat(row[0]).replace(minute=0, second=0, microsecond=0)
+                 for row in db.execute('SELECT time FROM samples')}
+        db.execute('CREATE TABLE IF NOT EXISTS control_samples (time TEXT PRIMARY KEY, result TEXT NOT NULL)')
+        for hour in hours:
+            sign = 1 if int(hour.timestamp()//(8*3600)) % 2 == 0 else -1
+            result = json.dumps({'source': 'pi', 'decision': {'source': 'pi', 'test_signal': sign}})
+            db.executemany('INSERT OR REPLACE INTO control_samples VALUES (?,?)',
+                           [((hour+timedelta(minutes=m)).isoformat(), result) for m in range(30)])
+
+
 class AutoModelTests(unittest.TestCase):
     def make_log(self, data, hours=250):
         config = validate({'mode': 'shadow', 'indoor': ['sensor.room'],
@@ -29,6 +45,7 @@ class AutoModelTests(unittest.TestCase):
                 db.execute('INSERT INTO samples VALUES (?,?,?)',
                            (stamp, json.dumps(readings), json.dumps(config)))
                 temperature += 0.5 + 0.025*(outside-temperature) - 0.01*signal
+        add_test_signal(data)
         return config, start
 
     def test_trains_from_local_measurements_and_builds_shadow_plan(self):
@@ -88,6 +105,7 @@ class AutoModelTests(unittest.TestCase):
                     db.execute('INSERT INTO samples VALUES (?,?,?)',
                                ((start+timedelta(hours=h)).isoformat(),json.dumps(readings),json.dumps(config)))
                     temperature+=0.5+0.025*(outside-temperature)-0.01*signal-0.001*cloud
+            add_test_signal(data)
             AutoModel(data).maybe_train(config,datetime.now(timezone.utc))
             saved=model_store.load_auto(data)
             self.assertEqual(saved['status']['state'],'ready')
@@ -160,6 +178,7 @@ class AutoModelTests(unittest.TestCase):
                     db.execute('INSERT INTO samples VALUES (?,?,?)',
                                ((start + timedelta(hours=h)).isoformat(), json.dumps(rows), json.dumps(config)))
                     temperature += 0.5 + 0.025 * (outside - temperature) - 0.01 * signal + 0.0001 * pv
+            add_test_signal(data)
             AutoModel(data).maybe_train(config, datetime.now(timezone.utc))
             saved = model_store.load_auto(data)
             self.assertEqual(saved['status']['state'], 'ready')
@@ -247,7 +266,7 @@ class AutoModelTests(unittest.TestCase):
     def test_scaled_signal_direction_gate(self):
         metrics=[{'hours':h,'windows':30,'mae':0.2,'baseline_mae':1.0} for h in (6,12,24)]
         model={'name':'linear','coefficients':[0,0,0,-0.04],
-               'means':[0]*4,'scales':[1,1,1,2]}
+               'means':[0]*4,'scales':[1,1,1,2],'test_hours':TESTED}
         report={'models':[model],'metrics':metrics}
         self.assertAlmostEqual(signal_effect(report),-0.18)
         self.assertFalse(quality(report))
@@ -255,11 +274,15 @@ class AutoModelTests(unittest.TestCase):
         self.assertTrue(quality(report))
         model['coefficients'][3]=-2.0
         self.assertTrue(quality(report))
+        # A signal that does next to nothing would make the planner push it to its limits.
+        model['coefficients'][3]=-0.002
+        self.assertAlmostEqual(signal_effect(report),-0.009)
+        self.assertTrue(any('signalrespons' in r for r in quality(report)))
 
     def test_pv_model_requires_plausible_positive_gain(self):
         metrics = [{'hours': h, 'windows': 30, 'mae': 0.2, 'baseline_mae': 1.0} for h in (6, 12, 24)]
         model = {'name': 'linear', 'coefficients': [0, 0, 0, -0.04, 0.04],
-                 'means': [0] * 5, 'scales': [1, 1, 1, 2, 1000]}
+                 'means': [0] * 5, 'scales': [1, 1, 1, 2, 1000], 'test_hours': TESTED}
         report = {'models': [model], 'metrics': metrics, 'mapping': {'pv_power': 'sensor.pv'}}
         self.assertFalse(quality(report))
         model['coefficients'][4] = -0.04
@@ -314,7 +337,7 @@ class AutoModelTests(unittest.TestCase):
     def candidate_report(self):
         return {'models': [
             {'name': name, 'coefficients': [0, 0, 0, -0.02] + ([0]*4 if name == 'lag6' else []),
-             'means': [0]*width, 'scales': [1]*width}
+             'means': [0]*width, 'scales': [1]*width, 'test_hours': dict(TESTED)}
             for name, width in (('linear', 4), ('lag6', 8))],
             'metrics': [{'hours': h, 'windows': 30, 'mae': 0.25, 'lag_mae': 0.24,
                          'baseline_mae': 0.26} for h in (6, 12, 24)]}
@@ -446,6 +469,195 @@ class AutoModelTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class IdentificationTests(unittest.TestCase):
+    """A model must have seen the test signal, and a model in use is kept until clearly beaten."""
+
+    def report(self, **metrics):
+        report = AutoModelTests.candidate_report(None)
+        report['metrics'] = [dict({'hours': h, 'windows': 30, 'mae': 0.25, 'lag_mae': 0.24, 'baseline_mae': 0.26}, **metrics)
+                             for h in (1, 6, 12, 24)]
+        return report
+
+    def test_test_hours_need_enough_samples_of_one_sign(self):
+        from app.auto_model import test_hours, count_tests
+        start = datetime(2026, 11, 1, tzinfo=timezone.utc)
+        rows = []
+        for hour, signs in enumerate(([1]*40, [1]*20, [1]*30+[-1]*30, [-1]*50+[0]*10, [0]*60)):
+            rows += [((start+timedelta(hours=hour, minutes=m)).isoformat(),
+                      json.dumps({'source': 'pi', 'decision': {'test_signal': sign} if sign else {}})) for m, sign in enumerate(signs)]
+        with tempfile.TemporaryDirectory() as directory:
+            data = Path(directory)
+            self.assertEqual(test_hours(data, start), {})
+            with sqlite3.connect(data / 'measurements.sqlite') as db:
+                db.execute('CREATE TABLE samples (time TEXT PRIMARY KEY, readings TEXT, settings TEXT)')
+            self.assertEqual(test_hours(data, start), {})
+            with sqlite3.connect(data / 'measurements.sqlite') as db:
+                db.execute('CREATE TABLE control_samples (time TEXT PRIMARY KEY, result TEXT NOT NULL)')
+                db.executemany('INSERT INTO control_samples VALUES (?,?)', rows)
+            tested = test_hours(data, start)
+            # Too few samples, mixed signs and hours without test signal do not count.
+            self.assertEqual(tested, {start: 1, start+timedelta(hours=3): -1})
+            self.assertEqual(test_hours(data, start+timedelta(hours=1)), {start+timedelta(hours=3): -1})
+            self.assertEqual(count_tests(tested, start, start+timedelta(hours=3)), {'plus': 1, 'minus': 0})
+
+    def test_models_without_test_signal_are_rejected_by_both_gates(self):
+        from app.auto_model import learning_quality, MIN_TEST_HOURS
+        report = self.report()
+        self.assertFalse(quality(report, 'lag6'))
+        self.assertFalse(learning_quality(report, 'lag6'))
+        report['models'][1]['test_hours'] = {'plus': 60, 'minus': MIN_TEST_HOURS-1}
+        self.assertTrue(any('testsignal' in r for r in quality(report, 'lag6')))
+        self.assertTrue(any('testsignal' in r for r in learning_quality(report, 'lag6')))
+        del report['models'][0]['test_hours']
+        self.assertTrue(any('0 h testsignal' in r for r in quality(report, 'linear')))
+        self.assertFalse(select_model(report))
+        self.assertIsNone(report['learning_model'])
+
+    def test_accurate_model_is_not_rejected_for_losing_to_a_steady_temperature(self):
+        from app.auto_model import learning_quality
+        steady = self.report(mae=0.12, lag_mae=0.12, baseline_mae=0.08)
+        steady['metrics'][0].update(mae=0.09, lag_mae=0.09, baseline_mae=0.04)
+        self.assertTrue(select_model(steady))
+        self.assertFalse(learning_quality(steady, 'linear'))
+        worse = self.report(mae=0.2, lag_mae=0.2, baseline_mae=0.1)
+        self.assertFalse(select_model(worse))
+        self.assertTrue(any('persistens' in r for r in quality(worse, 'linear')))
+        next_hour = self.report()
+        next_hour['metrics'][0].update(mae=0.12, lag_mae=0.12, baseline_mae=0.05)
+        self.assertTrue(any('1 h' in r and 'persistens' in r for r in learning_quality(next_hour, 'linear')))
+
+    def test_old_training_is_fine_while_validation_is_fresh(self):
+        from app.auto_model import validation_reasons
+        now = datetime.now(timezone.utc)
+        report = {'validation_method': 'daily_rolling_14d', 'training_end': (now-timedelta(days=40)).isoformat(),
+                  'data_end': now.isoformat(), 'validation_end': (now-timedelta(hours=3)).isoformat()}
+        self.assertEqual(validation_reasons(report, now), [])
+
+    def test_fixed_models_are_scored_on_the_same_windows(self):
+        from app.comparison import compare
+        from app.model import solve
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        points, temp = {}, 21.0
+        for hour in range(600):
+            out, signal = 5+4*math.sin(hour/19), 3+3*math.sin(hour/13)
+            points[start+timedelta(hours=hour)] = (temp, out, signal)
+            temp += 0.5+0.025*(out-temp)-0.01*signal
+        first = compare(points, solve)
+        self.assertEqual(first['kept_metrics'], {})
+        runaway = dict(first['models'][1], coefficients=[1e6]*8)
+        wrong_width = dict(first['models'][0], name='linear', coefficients=[0]*5, means=[0]*5, scales=[1]*5)
+        again = compare(points, solve, kept=[first['models'][0], runaway])
+        self.assertEqual(list(again['kept_metrics']), ['linear'])
+        self.assertEqual(sorted(again['kept_metrics']['linear']), [1, 6, 12, 24])
+        self.assertLess(again['kept_metrics']['linear'][24], 1e-5)
+        self.assertEqual(compare(points, solve, kept=[wrong_width])['kept_metrics'], {})
+
+    def retained(self, new_mae, old_mae, old=None, new_tested=True):
+        from app.auto_model import retain
+        report = self.report(mae=new_mae, lag_mae=new_mae)
+        if not new_tested:
+            for model in report['models']: model['test_hours'] = {'plus': 0, 'minus': 0}
+        previous = old or self.report()
+        for model in previous['models']: model['trained_at'] = 'earlier'
+        report['kept_metrics'] = {name: {h: old_mae for h in (1, 6, 12, 24)} for name in ('linear', 'lag6')}
+        retain(report, previous)
+        return report
+
+    def test_model_in_use_is_kept_until_clearly_beaten(self):
+        kept = self.retained(new_mae=0.19, old_mae=0.2)
+        self.assertTrue(all(m.get('kept') and m['trained_at'] == 'earlier' for m in kept['models']))
+        self.assertEqual([m['mae'] for m in kept['metrics']], [0.2]*4)
+        self.assertNotIn('kept_metrics', kept)
+        replaced = self.retained(new_mae=0.15, old_mae=0.2)
+        self.assertFalse(any(m.get('kept') for m in replaced['models']))
+        self.assertEqual([m['lag_mae'] for m in replaced['metrics']], [0.15]*4)
+
+    def test_model_type_in_use_stays_unless_the_other_is_clearly_better(self):
+        from app.auto_model import retain
+        def chosen(linear, lag, previous):
+            report = self.report(mae=linear, lag_mae=lag)
+            retain(report, previous)
+            select_model(report)
+            self.assertNotIn('in_use', report)
+            return report['selected_model'], report['learning_model']
+        self.assertEqual(chosen(0.2, 0.21, None), ('linear', 'linear'))
+        using_lag = dict(self.report(), selected_model='lag6', learning_model='lag6')
+        self.assertEqual(chosen(0.2, 0.21, using_lag), ('lag6', 'lag6'))
+        self.assertEqual(chosen(0.15, 0.21, using_lag), ('linear', 'linear'))
+        # A type that no longer passes cannot stay.
+        failing = self.report(mae=0.2, lag_mae=0.9)
+        retain(failing, using_lag)
+        select_model(failing)
+        self.assertEqual((failing['selected_model'], failing['learning_model']), ('linear', 'linear'))
+
+    def test_kept_model_gives_way_when_it_fails_and_stays_when_the_new_one_fails(self):
+        # The earlier model no longer passes on fresh windows: use the new one, whatever it is.
+        self.assertFalse(any(m.get('kept') for m in self.retained(new_mae=0.5, old_mae=0.9)['models']))
+        wrong_way = self.report()
+        for model in wrong_way['models']: model['coefficients'][3] = 0.02
+        self.assertFalse(any(m.get('kept') for m in self.retained(new_mae=0.5, old_mae=0.2, old=wrong_way)['models']))
+        # A much lower error does not help a new fit that never saw the test signal.
+        untested = self.retained(new_mae=0.05, old_mae=0.25, new_tested=False)
+        self.assertTrue(all(m.get('kept') for m in untested['models']))
+        self.assertEqual(untested['models'][0]['test_hours'], TESTED)
+        self.assertTrue(select_model(untested))
+
+    def test_daily_training_keeps_the_approved_model_and_reports_test_signal(self):
+        from app.auto_model import mapping_for, MIN_TEST_HOURS
+        with tempfile.TemporaryDirectory() as directory:
+            data = Path(directory)
+            config, start = AutoModelTests.make_log(None, data)
+            clock = start+timedelta(hours=249)
+            trainer = AutoModel(data)
+            trainer.maybe_train(config, clock)
+            first = model_store.load_auto(data)
+            self.assertEqual(first['status']['state'], 'ready')
+            self.assertEqual(first['status']['test_signal']['required'], MIN_TEST_HOURS)
+            self.assertGreaterEqual(first['status']['test_signal']['plus'], MIN_TEST_HOURS)
+            model = first['report']['models'][1]
+            self.assertEqual(model['trained_at'], clock.isoformat())
+            self.assertGreaterEqual(min(model['test_hours'].values()), MIN_TEST_HOURS)
+            received = {}
+            from app.model import evaluate_points
+            def slightly_better(points, mapping, kept=(), **kwargs):
+                received['kept'] = kept
+                report = evaluate_points(points, mapping, kept=kept, **kwargs)
+                for m in report['metrics']: m.update(mae=0.19, lag_mae=0.19, baseline_mae=0.3)
+                report['kept_metrics'] = {name: {h: 0.2 for h in (1, 6, 12, 24)} for name in ('linear', 'lag6')}
+                return report
+            with patch('app.auto_model.evaluate_points', side_effect=slightly_better):
+                trainer.maybe_train(config, clock+timedelta(days=1, hours=1))
+            second = model_store.load_auto(data)
+            self.assertEqual([m['name'] for m in received['kept']], ['linear', 'lag6'])
+            self.assertEqual(second['status']['state'], 'ready')
+            self.assertEqual(second['status']['trained_at'], (clock+timedelta(days=1, hours=1)).isoformat())
+            kept = second['report']['models'][1]
+            self.assertTrue(kept['kept'])
+            self.assertEqual((kept['trained_at'], kept['coefficients']), (model['trained_at'], model['coefficients']))
+            # A day whose data cannot be evaluated keeps the model for the next attempt.
+            with patch('app.auto_model.evaluate_points', side_effect=ValueError('Inga kompletta rullande 24-timmars testfönster.')):
+                trainer.last_check = None
+                trainer.maybe_train(config, clock+timedelta(days=2, hours=2))
+            gap = model_store.load_auto(data)
+            self.assertEqual(gap['status']['state'], 'needs_data')
+            self.assertIn('testfönster', gap['status']['quality_reasons']['temperature']['validation'][0])
+            self.assertEqual(gap['status']['evaluations']['temperature']['models'][1]['coefficients'], model['coefficients'])
+            with patch('app.auto_model.evaluate_points', side_effect=slightly_better):
+                trainer.last_check = None
+                trainer.maybe_train(config, clock+timedelta(days=2, hours=4))
+            self.assertEqual(model_store.load_auto(data)['report']['models'][1]['coefficients'], model['coefficients'])
+            # A model trained for another sensor selection is never carried over.
+            other = dict(config, outdoor='sensor.other')
+            with sqlite3.connect(data / 'measurements.sqlite') as db:
+                for stamp, raw in db.execute('SELECT time, readings FROM samples').fetchall():
+                    db.execute('UPDATE samples SET readings=?, settings=? WHERE time=?',
+                               (raw.replace('sensor.out', 'sensor.other'), json.dumps(other), stamp))
+            with patch('app.auto_model.evaluate_points', side_effect=slightly_better):
+                trainer.last_check = None
+                trainer.maybe_train(other, clock+timedelta(days=1, hours=2))
+            self.assertEqual(received['kept'], ())
+
 
 class ValidationFreshnessTests(unittest.TestCase):
     def test_old_validation_blocks_both_quality_profiles_and_live_plan(self):

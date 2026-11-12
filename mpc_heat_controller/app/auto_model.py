@@ -9,18 +9,28 @@ from datetime import datetime, timezone, timedelta
 
 from .model import evaluate_points
 from . import model_store
-from .comparison import features
+from .comparison import features, TRAIN_DAYS
 from .pv_history import recovered_zeros, STALE_PV, is_zero
 
-QUALITY_VERSION = 5
+QUALITY_VERSION = 6
 QUALITY_HORIZONS = (6, 12, 24)
 # Absolute limit for display-only shadow proposals, still bounded by persistence.
 MAX_MAE = 0.35
 HARD_MAX_MAE = 0.8
 MIN_WINDOWS = 24
 RESPONSE_HOURS = 12
-MIN_SIGNAL_RESPONSE = -6.0
-MAX_SIGNAL_RESPONSE = 0.0
+# Outside this range the signal either does next to nothing, which makes the planner push it
+# to its limits, or more than any heat curve can deliver.
+MIN_SIGNAL_RESPONSE = -1.0
+MAX_SIGNAL_RESPONSE = -0.02
+# A model this accurate is not rejected for losing to "the temperature stays the same": the
+# steadier the regulation, the harder that baseline is to beat, without the model being worse.
+PERSISTENCE_FLOOR = {1: 0.1, 6: 0.15, 12: 0.15, 24: 0.15}
+# Hours of test signal in each direction that a model's training period must contain.
+MIN_TEST_HOURS = 48
+TEST_HOUR_SAMPLES = 30
+# A new fit replaces the model in use only when its error is at most this share of the kept one's.
+KEEP_MARGIN = 0.9
 
 # Learning mode: active MPC within a band around PI, so a weaker model is acceptable.
 PROFILE_DAYS = 7
@@ -109,6 +119,72 @@ def local_points(data, mapping):
     return points, {'samples': len(rows), 'incomplete_hours': len(buckets) - len(points),
                     'excluded_samples': excluded, 'recovered_pv_zero_samples': len(recovered),
                     'pv_stale_zero_hours': [t.isoformat() for t in sorted(stale_zero_hours-set(points))][-8:]}
+
+
+def test_hours(data, since):
+    """UTC hours during which the test signal was sent: +1 for a raised signal, -1 for a lowered one.
+    Only this variation is known to be independent of weather and room temperature."""
+    path = data / 'measurements.sqlite'
+    if not path.exists():
+        return {}
+    with closing(sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)) as db:
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='control_samples'").fetchone():
+            return {}
+        rows = db.execute('SELECT time, result FROM control_samples WHERE time >= ? ORDER BY time', (since.isoformat(),)).fetchall()
+    counts = defaultdict(lambda: [0, 0, 0])
+    for stamp, raw in rows:
+        try:
+            moment = datetime.fromisoformat(stamp.replace('Z', '+00:00'))
+            test = (json.loads(raw).get('decision') or {}).get('test_signal') or 0
+            count = counts[moment.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)]
+            count[0] += 1
+            count[1] += test > 0
+            count[2] += test < 0
+        except (ValueError, TypeError, AttributeError):
+            continue
+    return {hour: 1 if plus >= minus else -1 for hour, (total, plus, minus) in counts.items()
+            if total >= TEST_HOUR_SAMPLES and max(plus, minus) >= 0.75*total}
+
+
+def count_tests(tested, start, end):
+    signs = [sign for hour, sign in tested.items() if start <= hour < end]
+    return {'plus': signs.count(1), 'minus': signs.count(-1)}
+
+
+def annotate(report, tested, clock):
+    """Record on each new model when it was trained and how much test signal its period held."""
+    try:
+        start, end = datetime.fromisoformat(report['training_start']), datetime.fromisoformat(report['training_end'])
+    except (KeyError, TypeError, ValueError):
+        return
+    for model in report.get('models', []):
+        model.update(training_start=report['training_start'], training_end=report['training_end'],
+                     trained_at=clock.isoformat(), test_hours=count_tests(tested, start, end))
+
+
+def retain(report, previous):
+    """Keep each model from `previous` while it still passes on this week's windows, unless the
+    new fit is clearly better. The house does not change from day to day, and a fit made on data
+    with test signal says more about the signal than a later fit made without it."""
+    kept = report.pop('kept_metrics', None) or {}
+    if previous:
+        report['in_use'] = {key: previous.get(key) for key in ('selected_model', 'learning_model')}
+    for index, model in enumerate(report.get('models', [])):
+        name = model['name']
+        column = 'lag_mae' if name == 'lag6' else 'mae'
+        old = next((m for m in (previous or {}).get('models', []) if m.get('name') == name), None)
+        if not old or name not in kept:
+            continue
+        models = list(report['models'])
+        models[index] = dict(old, kept=True)
+        trial = dict(report, models=models, metrics=[dict(m, **{column: kept[name][m['hours']]}) for m in report['metrics']])
+        if learning_quality(trial, name):
+            continue
+        if not learning_quality(report, name) and _total_mae(report, name) < KEEP_MARGIN*_total_mae(trial, name):
+            continue
+        report['models'], report['metrics'] = trial['models'], trial['metrics']
+    if report.get('models'):
+        report['coefficients'] = report['models'][0]['coefficients']
 
 
 def _predict(model, values):
@@ -254,17 +330,28 @@ def validation_reasons(report, clock=None):
         if any(t.tzinfo is None for t in (end, data_end, trained)): raise ValueError()
         if data_end-end > timedelta(hours=48):
             return ['Valideringen saknar kompletta testdygn nära senaste mätningen (mer än 48 h).']
-        if clock is not None and (clock-end > timedelta(hours=48) or clock-trained > timedelta(hours=48)):
-            return ['Träning eller validering är äldre än 48 h; PI styr tills färska data har validerats.']
+        # The training itself may be old: a kept model is scored again on fresh windows every day.
+        if clock is not None and clock-end > timedelta(hours=48):
+            return ['Valideringen är äldre än 48 h; PI styr tills färska data har validerats.']
     except (KeyError, ValueError, TypeError):
         return ['Modellens tränings- eller valideringsperiod är ogiltig.']
     return []
 
 
+def test_reasons(report, name):
+    model = next((m for m in (report or {}).get('models', []) if m.get('name') == name), {})
+    hours = model.get('test_hours') or {}
+    plus, minus = hours.get('plus', 0), hours.get('minus', 0)
+    if min(plus, minus) >= MIN_TEST_HOURS:
+        return []
+    return [f'{name}: träningsperioden har {plus} h testsignal med höjd signal och {minus} h med sänkt; kräver minst '
+            f'{MIN_TEST_HOURS} h av vardera. Testsignalen körs under aktiv styrning med MPC-inlärning påslagen.']
+
+
 def quality(report, name=None):
     """Return rejection reasons; an empty list means the candidate passes."""
     name = name or (report or {}).get('selected_model', 'linear')
-    reasons = validation_reasons(report)
+    reasons = validation_reasons(report) + test_reasons(report, name)
     effect = signal_effect(report, name)
     if effect is None or not MIN_SIGNAL_RESPONSE <= effect <= MAX_SIGNAL_RESPONSE:
         reasons.append(f'{name}: signalrespons vid 6–12 h = {effect}; kräver {MIN_SIGNAL_RESPONSE} ≤ respons ≤ {MAX_SIGNAL_RESPONSE} °C per °C.')
@@ -284,15 +371,16 @@ def quality(report, name=None):
             reasons.append(f'{name} {h} h: {m.get("windows", 0)} fönster; kräver ≥ {MIN_WINDOWS}.')
         if not math.isfinite(mae) or mae > MAX_MAE or mae > HARD_MAX_MAE:
             reasons.append(f'{name} {h} h: MAE {mae} °C; kräver ≤ {MAX_MAE} °C (absolut tak {HARD_MAX_MAE} °C).')
-        if not math.isfinite(baseline) or mae > baseline:
-            reasons.append(f'{name} {h} h: MAE {mae} °C > persistens {baseline} °C.')
+        if not math.isfinite(baseline) or mae > max(baseline, PERSISTENCE_FLOOR[h]):
+            reasons.append(f'{name} {h} h: MAE {mae} °C > persistens {baseline} °C (godtas upp till {PERSISTENCE_FLOOR[h]} °C).')
     return reasons
 
 
 def learning_quality(report, name):
-    """Rejection reasons for MPC learning mode: correct signal direction, stable and below the
-    absolute ceiling at every horizon, and better than persistence for the next hour."""
-    reasons = validation_reasons(report) + [r for r in quality(report, name) if 'signalrespons' in r or 'solcellseffekt' in r]
+    """Rejection reasons for MPC learning mode: enough test signal, plausible signal response,
+    stable and below the absolute ceiling at every horizon, and for the next hour either better
+    than persistence or within the accuracy floor."""
+    reasons = validation_reasons(report) + [r for r in quality(report, name) if 'signalrespons' in r or 'solcellseffekt' in r or 'testsignal' in r]
     metrics = {m['hours']: m for m in (report or {}).get('metrics', [])}
     for h in (1,) + QUALITY_HORIZONS:
         m = metrics.get(h, {})
@@ -301,8 +389,8 @@ def learning_quality(report, name):
             reasons.append(f'{name} {h} h: {m.get("windows", 0)} fönster; kräver ≥ {MIN_WINDOWS}.')
         if not math.isfinite(mae) or mae > HARD_MAX_MAE:
             reasons.append(f'{name} {h} h: MAE {mae} °C; inlärning kräver ≤ {HARD_MAX_MAE} °C.')
-        if h == 1 and not mae <= m.get('baseline_mae', float('nan')):
-            reasons.append(f'{name} 1 h: MAE {mae} °C > persistens {m.get("baseline_mae")} °C.')
+        if h == 1 and not mae <= max(m.get('baseline_mae', float('nan')), PERSISTENCE_FLOOR[1]):
+            reasons.append(f'{name} 1 h: MAE {mae} °C > persistens {m.get("baseline_mae")} °C (godtas upp till {PERSISTENCE_FLOOR[1]} °C).')
     return reasons
 
 
@@ -310,17 +398,29 @@ def _total_mae(report, name):
     return sum(m['lag_mae' if name == 'lag6' else 'mae'] for m in report['metrics'] if m['hours'] in QUALITY_HORIZONS)
 
 
+def _pick(report, names, current):
+    """Lowest error, but the model type already in use stays unless the other is clearly better.
+    The two types can differ a lot in signal response; swapping on a daily coin toss is no gain."""
+    if not names:
+        return None
+    best = min(names, key=lambda name: _total_mae(report, name))
+    if current in names and _total_mae(report, best) >= KEEP_MARGIN*_total_mae(report, current):
+        return current
+    return best
+
+
 def select_model(report):
     names = [m['name'] for m in report['models'] if m['name'] in ('linear', 'lag6')]
     checks = {name: quality(report, name) for name in names}
+    in_use = report.pop('in_use', None) or {}
     report['quality_version'] = QUALITY_VERSION
     report['quality_reasons'] = checks
     approved = [name for name, reasons in checks.items() if not reasons]
-    report['selected_model'] = min(approved, key=lambda name: _total_mae(report, name)) if approved else None
+    report['selected_model'] = _pick(report, approved, in_use.get('selected_model'))
     learning = {name: learning_quality(report, name) for name in names}
     report['learning_reasons'] = learning
     usable = [name for name, reasons in learning.items() if not reasons]
-    report['learning_model'] = min(usable, key=lambda name: _total_mae(report, name)) if usable else None
+    report['learning_model'] = _pick(report, usable, in_use.get('learning_model'))
     return bool(approved)
 
 
@@ -363,7 +463,7 @@ class AutoModel:
         else:
             evaluations = status.get('evaluations') or {}
             candidates = [evaluations[k] for k in ('pv', 'cloud', 'temperature') if evaluations.get(k)]
-        reasons = []
+        reasons, model_ready = [], False
         for candidate in candidates:
             mapping = candidate.get('mapping') or {}
             if mapping != mapping_for(config, auto_cloud=bool(mapping.get('cloud_auto')), pv_baseline=bool(mapping.get('pv_baseline'))):
@@ -374,12 +474,14 @@ class AutoModel:
             if not usable:
                 reasons += [r for n in names for r in learning_quality(candidate, n)]
                 continue
+            model_ready = True
             try:
                 points = self.hourly_points(mapping, clock)
             except (OSError, sqlite3.Error):
                 reasons.append('Mätloggen kunde inte läsas.')
                 continue
-            for name in sorted(usable, key=lambda n: _total_mae(candidate, n)):
+            # The type chosen at training first; the other only if that one cannot plan.
+            for name in sorted(usable, key=lambda n: (n != candidate.get('learning_model'), _total_mae(candidate, n))):
                 try:
                     profile = disturbance_profile(candidate, name, points, clock)
                 except (KeyError, StopIteration, ValueError, TypeError, OverflowError):
@@ -388,11 +490,13 @@ class AutoModel:
                 blockers = []
                 plan = live_plan(dict(candidate, selected_model=name), inside, applied, forecast, config, output, points, blockers, profile)
                 if plan:
-                    return {'state': 'ready', 'model': name, 'source': 'pv' if mapping.get('pv_power') else 'cloud' if mapping.get('cloud') else 'temperature',
+                    return {'state': 'ready', 'model_ready': True, 'model': name, 'source': 'pv' if mapping.get('pv_power') else 'cloud' if mapping.get('cloud') else 'temperature',
                             'signal': plan[0]['signal'], 'plan': plan, 'planned_at': clock.isoformat(),
                             'profile': {str(h): round(v, 4) for h, v in sorted(profile.items())}}
                 reasons += blockers
-        return {'state': 'blocked', 'reasons': list(dict.fromkeys(reasons)) or ['Ingen modell är tränad ännu.'], 'plan': []}
+        # `model_ready` False means no model passes, which is what the test signal is for. A model
+        # that passes but cannot plan right now, for want of a forecast say, needs no test signal.
+        return {'state': 'blocked', 'model_ready': model_ready, 'reasons': list(dict.fromkeys(reasons)) or ['Ingen modell är tränad ännu.'], 'plan': []}
 
     def maybe_train(self, config, clock=None):
         clock = clock or datetime.now(timezone.utc)
@@ -425,21 +529,49 @@ class AutoModel:
                     'checked_at': clock.isoformat(), 'complete_hours': 0})
                 return
             points, info = local_points(self.data, mapping)
+            # Training reaches TRAIN_DAYS back from the newest logged hour, which need not be this hour.
+            latest = max(points) if points else clock
+            tested = test_hours(self.data, latest-timedelta(days=TRAIN_DAYS+1))
+            previous = ((saved or {}).get('status') or {}).get('evaluations') or {}
+
+            carried = set()
+
+            def earlier(key, mapping):
+                old = previous.get(key)
+                return old if old and old.get('mapping') == mapping and old.get('quality_version') == QUALITY_VERSION else None
+
+            def carry(key, mapping):
+                """A day without enough data to evaluate must not cost the model in use. Its old
+                validation still blocks planning after 48 h, until it can be scored again."""
+                if earlier(key, mapping):
+                    status['evaluations'][key] = earlier(key, mapping)
+                    carried.add(key)
+
+            def evaluated(key, points, mapping, incomplete):
+                old = earlier(key, mapping)
+                report = evaluate_points(points, mapping, incomplete_hours=incomplete, source='local_log',
+                                         kept=old['models'] if old else ())
+                annotate(report, tested, clock)
+                retain(report, old)
+                return report
             status = {'state': 'collecting', 'checked_at': clock.isoformat(),
-                      'complete_hours': len(points), **info, 'mapping': mapping}
+                      'complete_hours': len(points), **info, 'mapping': mapping,
+                      'test_signal': dict(count_tests(tested, latest-timedelta(days=TRAIN_DAYS), latest+timedelta(hours=1)), required=MIN_TEST_HOURS),
+                      'evaluations': {}}
             if len(points) < MIN_COMPLETE_HOURS:
                 status['message'] = f'Samlar data: {len(points)} av minst {MIN_COMPLETE_HOURS} kompletta timmar.'
                 model_store.save_auto_status(self.data, status)
                 return
             try:
                 try:
-                    report = evaluate_points(points, mapping, incomplete_hours=info['incomplete_hours'], source='local_log')
+                    report = evaluated('temperature', points, mapping, info['incomplete_hours'])
                 except ValueError as error:
                     status['quality_reasons'] = {'temperature': {'validation': [str(error)]}}
+                    carry('temperature', mapping)
                     if not config.get('pv_power'):
                         raise
                     report = None
-                status['evaluations'] = {'temperature': report}
+                status['evaluations'].setdefault('temperature', report)
                 if report is None or not select_model(report):
                     report = None
                 automatic = mapping_for(config, auto_cloud=True)
@@ -447,8 +579,7 @@ class AutoModel:
                     cloud_points, cloud_info = local_points(self.data, automatic)
                     if len(cloud_points) >= MIN_COMPLETE_HOURS and max(cloud_points) >= clock-timedelta(hours=2):
                         try:
-                            cloud_report = evaluate_points(cloud_points, automatic,
-                                incomplete_hours=cloud_info['incomplete_hours'], source='local_log')
+                            cloud_report = evaluated('cloud', cloud_points, automatic, cloud_info['incomplete_hours'])
                             status['evaluations']['cloud'] = cloud_report
                             if select_model(cloud_report):
                                 cloud_report['fallback'] = report
@@ -456,7 +587,9 @@ class AutoModel:
                                 status['complete_hours'] = len(cloud_points)
                                 status['mapping'] = automatic
                         except ValueError:
-                            pass
+                            carry('cloud', automatic)
+                    else:
+                        carry('cloud', automatic)
                 pv_reason = ''
                 if config.get('pv_power'):
                     pv_mapping = mapping_for(config)
@@ -464,8 +597,7 @@ class AutoModel:
                     status['pv_diagnostics'] = pv_info
                     if len(pv_points) >= MIN_COMPLETE_HOURS and max(pv_points) >= clock-timedelta(hours=2):
                         try:
-                            pv_report = evaluate_points(pv_points, pv_mapping,
-                                incomplete_hours=pv_info['incomplete_hours'], source='local_log')
+                            pv_report = evaluated('pv', pv_points, pv_mapping, pv_info['incomplete_hours'])
                             pv_report['recovered_pv_zero_samples'] = pv_info.get('recovered_pv_zero_samples', 0)
                             status['evaluations']['pv'] = pv_report
                             if select_model(pv_report):
@@ -479,11 +611,13 @@ class AutoModel:
                         except ValueError as error:
                             status.setdefault('quality_reasons', {})['pv'] = {'validation': [str(error)]}
                             pv_reason = ' Solcellsmodellen kunde inte valideras.'
+                            carry('pv', pv_mapping)
                     else:
+                        carry('pv', pv_mapping)
                         pv_reason = f' Solcellsmodellen samlar giltig produktionshistorik: {len(pv_points)} av minst {MIN_COMPLETE_HOURS} timmar.'
                 if pv_reason and report is not None:
                     pv_reason += ' Temperaturmodellen används.'
-                status.setdefault('quality_reasons', {}).update({key: value.get('quality_reasons', {}) for key, value in status['evaluations'].items() if value})
+                status.setdefault('quality_reasons', {}).update({key: value.get('quality_reasons', {}) for key, value in status['evaluations'].items() if value and key not in carried})
                 if report is None:
                     raise ValueError(('Varken temperaturmodellen eller solcellsmodellen klarade kvalitetskontrollen. ' if config.get('pv_power') else 'Temperaturmodellen klarade inte kvalitetskontrollen. ') + pv_reason.strip())
                 status.update({'state': 'ready', 'message': (('Molnmodell tränad från rumstemperatur och väderentitetens aktuella molnighet; utetemperaturmodell finns som reserv.' if report.get('fallback') else 'Molnmodell tränad; ingen validerad temperaturmodell som reserv.')

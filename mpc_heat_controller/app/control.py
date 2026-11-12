@@ -14,6 +14,11 @@ class Control:
     # Once PI has taken over at a comfort limit, the temperature must come this far back
     # inside before MPC decides again. Without it the two swap every minute at the limit.
     GUARD_HYSTERESIS=0.2
+    # Test signal while no house model is approved. PI alone ties the signal to weather and room
+    # temperature, so its data cannot show what the signal does. Eight-hour blocks drift against
+    # the day; twelve-hour blocks would follow it and be mistaken for the daily cycle.
+    TEST_AMPLITUDE=1.0
+    TEST_HALF_PERIOD=8*3600
 
     def __init__(self, request, data=None):
         self.request=request
@@ -175,21 +180,34 @@ class Control:
         return None
 
     @staticmethod
+    def test_signal(c,now):
+        amplitude=min(Control.TEST_AMPLITUDE,c['mpc_max_deviation'])
+        return amplitude if int(now.timestamp()//Control.TEST_HALF_PERIOD)%2==0 else -amplitude
+
+    @staticmethod
     def choose(c,pi,mpc,now=None,guard=None):
         """Pick the signal to send. MPC learning stays within ±mpc_max_deviation of PI's proposal;
         PI alone decides when it is cold, when no usable plan exists or when the plan is stale.
-        When it is too warm, MPC may only give less heat than PI. `guard` is the previous
-        decision's guard state; the new one is returned in the decision."""
+        When it is too warm, MPC may only give less heat than PI. While no model is approved and
+        the temperature is inside the comfort range, PI carries the test signal. `guard` is the
+        previous decision's guard state; the new one is returned in the decision."""
         signal=pi.get('signal')
         if not c.get('mpc_learning'):return signal,{'source':'pi','reason':'MPC-inlärning är avstängd.'}
         inside=c['target']-pi['error']
         guard=Control.guard_state(c,inside,guard)
         sv=lambda value,digits=2:f'{value:.{digits}f}'.replace('.',',')
         learning=(mpc or {}).get('learning') or {}
+        now=now or datetime.now(timezone.utc)
         if learning.get('state')!='ready':
-            return signal,{'source':'pi','guard':guard,'reason':'MPC saknar plan: '+' '.join((learning.get('reasons') or ['ingen inlärningsmodell'])[:2])}
+            reason='MPC saknar plan: '+' '.join((learning.get('reasons') or ['ingen inlärningsmodell'])[:2])
+            # Only a missing model calls for the test signal, not a missing forecast or a stale plan.
+            if learning.get('model_ready') is not False:return signal,{'source':'pi','guard':guard,'reason':reason}
+            if guard:return signal,{'source':'pi','guard':guard,'reason':reason+' Testsignalen pausar utanför komfortområdet.'}
+            test=Control.test_signal(c,now)
+            return signal+test,{'source':'pi','guard':guard,'test_signal':test,'pi_signal':signal,
+                                'reason':reason+f' PI styr med testsignal {test:+g} °C'.replace('.',',')+' så att husmodellen kan lära sig signalens effekt.'}
         try:
-            planned=float(learning['signal']);age=(now or datetime.now(timezone.utc))-datetime.fromisoformat(learning['planned_at'])
+            planned=float(learning['signal']);age=now-datetime.fromisoformat(learning['planned_at'])
             if not math.isfinite(planned):raise ValueError()
         except (KeyError,TypeError,ValueError):return signal,{'source':'pi','guard':guard,'reason':'MPC-planen är ogiltig.'}
         if not timedelta(0)<=age<=timedelta(minutes=15):return signal,{'source':'pi','guard':guard,'reason':'MPC-planen är för gammal.'}
